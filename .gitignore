@@ -1,0 +1,59 @@
+# ============================================================
+# SmartEdge_F407 .gitignore
+# 适配 STM32CubeMX + CMake + ARM GCC + VS Code
+# ============================================================
+
+# --- CMake 与构建产物 ---
+build/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.ninja
+.ninja_deps
+.ninja_log
+
+# --- 嵌入式编译输出二进制与中间文件 ---
+*.o
+*.obj
+*.d
+*.a
+*.lib
+*.elf
+*.bin
+*.hex
+*.srec
+*.map
+*.list
+*.lss
+*.lst
+*.su
+*.cyclo
+*.gcno
+*.gcda
+
+# --- STM32CubeMX / IDE 本地缓存与临时文件 ---
+.mxproject
+*.mxproject
+.vscode/
+.idea/
+.settings/
+.cproject
+.project
+*.launch
+*.bak
+*.orig
+*.tmp
+*.log
+*.swp
+*~
+
+# --- 操作系统垃圾文件 ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- 第三方硬件模块资料文件夹（docs/ 下仅提交自研基线 .md 文档） ---
+docs/*/
