@@ -1,0 +1,43 @@
+# ==============================================================================
+# SmartEdge_F407 代码格式化配置（与 STM32CubeMX 生成代码风格保持一致）
+# 由 VS Code 中 STMicroelectronics.stm32cube-ide-clangd (starm-clangd) 自动读取
+# ==============================================================================
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# 与 STM32CubeMX 生成代码一致：2 空格缩进、禁用 Tab
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ContinuationIndentWidth: 2
+
+# Allman 风格：函数、if/else、for、while、switch、struct 左大括号独占一行
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# 保持 CubeMX 风格：switch case 缩进、预处理指令顶格不缩进
+IndentCaseLabels: true
+IndentPPDirectives: None
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+ColumnLimit: 100
+
+# 严禁自动重排 #include（避免打乱 FreeRTOS.h -> task.h、main.h 等强依赖顺序）
+SortIncludes: Never
+
+# 严禁折行改写注释（保护 CubeMX USER CODE 横幅与中文 Doxygen 注释排版）
+ReflowComments: false
+AlignTrailingComments: true
+
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+InsertNewlineAtEOF: true
+...

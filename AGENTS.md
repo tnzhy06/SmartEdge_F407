@@ -20,9 +20,9 @@
 ## 2. 目录结构与 STM32CubeMX 保护边界
 
 - **CubeMX 自动生成区（高危保护区）**：
-  - `Core/`、`Drivers/`、`FATFS/`、`LWIP/`、`Middlewares/Third_Party/(FreeRTOS,LwIP,FatFs)`、`cmake/stm32cubemx/`、`STM32F407VGTx_FLASH.ld` 均由 STM32CubeMX 自动维护。
+  - `Core/`、`Drivers/`、`FATFS/`、`LWIP/`、`Middlewares/Third_Party/(FreeRTOS,LwIP,FatFs)`、`cmake/stm32cubemx/`、`STM32F407xx_FLASH.ld` 均由 STM32CubeMX 自动维护。
   - **严禁**在 CubeMX 生成文件的 `USER CODE` 注释块之外添加代码；所有胶水调用必须严格放在 `/* USER CODE BEGIN ... */` 与 `/* USER CODE END ... */` 之间。
-  - **严禁**手改 `STM32F407VGTx_FLASH.ld`、`cmake/stm32cubemx/CMakeLists.txt` 与 `SmartEdge_F407.ioc`（`.ioc` 由开发者按 Agent 提供的配置指南在 STM32CubeMX 图形界面亲自配置并生成）。
+  - **严禁**手改 `STM32F407xx_FLASH.ld`、`cmake/stm32cubemx/CMakeLists.txt` 与 `SmartEdge_F407.ioc`（`.ioc` 由开发者按 Agent 提供的配置指南在 STM32CubeMX 图形界面亲自配置并生成）。
 - **自研代码区（延续 CubeMX `Inc/` + `Src/` 风格）**：
   - `BSP/Inc/`、`BSP/Src/`：板级外设驱动（仅允许依赖 HAL 与 CubeMX 生成头文件，**严禁反向依赖 `App/`**）。
   - `App/Inc/`、`App/Src/`：业务任务、全局状态 `g_sys`、轻量 Modbus/CAN 协议、LVGL UI 页面、配置存储及 OTA/低功耗接口桩。
@@ -34,7 +34,7 @@
 ## 3. 基本开发与 C11 编码规范
 
 ### 3.1 格式与命名
-- **语言与编码**：纯 **C11**；文件统一 **UTF-8（无 BOM）**，行尾 **LF**，缩进 **4 空格**（禁用 Tab），单行建议 `≤ 100` 字符。
+- **语言与编码**：纯 **C11**；文件统一 **UTF-8（无 BOM）**，行尾 **LF**，与 STM32CubeMX 保持一致采用 **2 空格缩进 + Allman 大括号换行风格**（禁用 Tab，由根目录 `.clang-format` 统一约束），单行建议 `≤ 100` 字符。
 - **文件命名**：全小写下划线，带明确层级前缀：
   - BSP 驱动：`bsp_<外设>.h/.c`（如 `bsp_rs485.c`、`bsp_st7789.c`）。
   - 业务/协议/UI：`app_<模块>.h/.c`（如 `app_control.c`、`app_modbus_tcp.c`）、`ui_<页面>.c`（如 `ui_page_overview.c`）。

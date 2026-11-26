@@ -1,0 +1,15 @@
+# 统一源码与文档采用 LF 行尾，消除 Windows 下 Git CRLF 告警
+* text=auto eol=lf
+
+# Windows 批处理脚本保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源明确标记不做换行转换
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary
+*.elf binary
+*.bin binary
+*.hex binary
