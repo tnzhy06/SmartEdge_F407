@@ -640,6 +640,8 @@ stateDiagram-v2
 | `fault clear` | `AppFanSim_SetInjectMask(0)` 清除全部 CAN 模拟故障 |
 | `wdt hang <task>` | `<task>` 为 `control`/`fansim`/`sensor`/`net`/`hmi`/`monitor`，置位 `g_hang_inject_mask` 对应位令目标任务死循环 |
 | `sntp sync` | 置位 `g_sntp_force_sync = 1` 通知 `NetTask` 立即重启一次 SNTP 请求 |
+| `rtc set YYYY-MM-DD HH:MM:SS` | 手动设置本地硬件 RTC 时间并置位 `RTC_BKP_DR0` 已校准魔数（M1 即可验证） |
+| `reboot` | 触发 `NVIC_SystemReset()` 软件复位，用于验证 `SW` 复位原因与 RTC 走时保持 |
 | `ota enter` | 调用 `App_OtaRequestUpgrade()` |
 
 - **`app_ota` API（`App/Inc/app_ota.h`）**：

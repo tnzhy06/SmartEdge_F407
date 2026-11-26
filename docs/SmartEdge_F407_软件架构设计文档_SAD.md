@@ -101,7 +101,7 @@ D:\SmartEdge_F407\
 ├── SmartEdge_F407.ioc                 # STM32CubeMX 工程配置文件
 ├── CMakeLists.txt                     # CubeMX 生成的根 CMakeLists（在 USER CODE 区追加 BSP/App/lvgl）
 ├── CMakePresets.json                  # CubeMX 生成的 CMake 构建预设（Debug / Release）
-├── STM32F407VGTx_FLASH.ld             # CubeMX 默认链接脚本（直接使用，无需修改）
+├── STM32F407xx_FLASH.ld               # CubeMX 默认链接脚本（直接使用，无需修改）
 ├── cmake/
 │   └── stm32cubemx/                   # CubeMX 自动维护的芯片与中间件构建清单
 ├── Core/                              # CubeMX 自动生成

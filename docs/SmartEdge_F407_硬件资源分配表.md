@@ -100,7 +100,7 @@ flowchart LR
 
 ### 2.3 SRAM 与备份寄存器分配建议
 
-> **CubeMX 默认链接脚本适配原则**：直接使用 STM32CubeMX 自动生成的 `STM32F407VGTx_FLASH.ld`（`128 KB` 主 RAM + `64 KB` CCMRAM），无需手动切分 SRAM1/SRAM2，只需将纯 CPU 访问的大内存对象放 `.ccmram` 以腾出主 RAM 空间。
+> **CubeMX 默认链接脚本适配原则**：直接使用 STM32CubeMX 自动生成的 `STM32F407xx_FLASH.ld`（`128 KB` 主 RAM + `64 KB` CCMRAM），无需手动切分 SRAM1/SRAM2，只需将纯 CPU 访问的大内存对象放 `.ccmram` 以腾出主 RAM 空间。
 
 | 内存区域 | 地址范围 | 容量 | 推荐分配对象 | 硬件约束说明 |
 | --- | --- | :---: | --- | --- |
@@ -117,8 +117,8 @@ flowchart LR
 | **HSE（外部高速晶振）** | `8 MHz` | 板载无源晶振 `X1`（`PH0`/`PH1`，20 pF 匹配电容） | 主 PLL 输入基准 |
 | **LSE（外部低速晶振）** | `32.768 kHz` | 板载晶振 `X2`（`PC14`/`PC15`，12 pF 匹配电容） | **RTC** 实时时钟源（断电由 VBAT 保持走时） |
 | **LSI（内部低速 RC）** | `~32 kHz`（范围 17–47 kHz） | 片内 RC 振荡器 | **IWDG** 独立看门狗时钟源（硬件固定） |
-| **主 PLL 输出（SYSCLK）** | `168 MHz` | `HSE (8 MHz) / PLLM(8) * PLLN(336) / PLLP(2)` | Cortex-M4 内核、SysTick、AHB 总线 |
-| **PLL48CLK** | `48 MHz` | `HSE (8 MHz) / PLLM(8) * PLLN(336) / PLLQ(7)` | **SDIO**（48 MHz 基准）、**RNG**、预留 **USB OTG FS**（严格要求 48 MHz） |
+| **主 PLL 输出（SYSCLK）** | `168 MHz` | `HSE (8 MHz) / PLLM(4) * PLLN(168) / PLLP(2)`（VCO 输入 `2 MHz`，更低抖动） | Cortex-M4 内核、SysTick、AHB 总线 |
+| **PLL48CLK** | `48 MHz` | `HSE (8 MHz) / PLLM(4) * PLLN(168) / PLLQ(7)` | **SDIO**（48 MHz 基准）、**RNG**、预留 **USB OTG FS**（严格要求 48 MHz） |
 | **HCLK（AHB 总线）** | `168 MHz` | `SYSCLK / 1` | DMA1、DMA2、ETH MAC、GPIO、Flash（5 Wait States + 预取/Cache 使能） |
 | **PCLK1（APB1 外设时钟）** | `42 MHz` | `HCLK / 4`（STM32F407 上限 42 MHz） | **SPI2**（最高 21 MHz）、**CAN1/CAN2**、**USART2**、PWR |
 | **APB1 定时器时钟** | `84 MHz` | `PCLK1 × 2`（分频系数 ≠ 1 时自动倍频） | **TIM6**（HAL 时基）、**TIM7**（运行统计预留）、**TIM12**（LCD 背光 PWM） |
