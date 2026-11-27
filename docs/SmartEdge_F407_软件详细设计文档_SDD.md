@@ -5,18 +5,19 @@
 | 项目 | 内容 |
 | --- | --- |
 | **文档编号** | `SE-F407-SDD-001` |
-| **文档版本** | `V1.0` |
-| **文档状态** | 待评审（Ready for Design Review） |
+| **文档版本** | `V1.1` |
+| **文档状态** | 基线更新（M2 实测同步） |
 | **项目名称** | SmartEdge_F407 工业边缘采集网关与本地触控终端 |
 | **工程根目录** | `D:\SmartEdge_F407`（STM32CubeMX 原生 CMake 工程，纯 C11） |
-| **上游基线** | [软件需求规格说明书（SRS）](./SmartEdge_F407_软件需求规格说明书_SRS.md)（`SE-F407-SRS-001`）<br>[硬件资源分配表](./SmartEdge_F407_硬件资源分配表.md)（`SE-F407-HW-001`）<br>[软件架构设计文档（SAD）](./SmartEdge_F407_软件架构设计文档_SAD.md)（`SE-F407-SAD-001` V2.0） |
-| **编制日期** | 2026-11-25 |
+| **上游基线** | [软件需求规格说明书（SRS）](./SmartEdge_F407_软件需求规格说明书_SRS.md)（`SE-F407-SRS-001`）<br>[硬件资源分配表](./SmartEdge_F407_硬件资源分配表.md)（`SE-F407-HW-001`）<br>[软件架构设计文档（SAD）](./SmartEdge_F407_软件架构设计文档_SAD.md)（`SE-F407-SAD-001` V2.1） |
+| **编制日期** | 2026-11-27 |
 
 ### 修订记录
 
 | 版本 | 日期 | 修订说明 |
 | --- | --- | --- |
 | `V1.0` | 2026-11-25 | 完成全系统 9 个 BSP 驱动模块、5 个核心服务/协议模块、8 个 FreeRTOS 任务及 2 个扩展预留模块的详细设计，并附设计评审风险核查表与分阶段联调路线。 |
+| `V1.1` | 2026-11-27 | 同步 M2 阶段实测落地细节：LVGL v9.6.0 采用原生 `LV_COLOR_FORMAT_RGB565_SWAPPED`（零刷屏字节交换）、`.ccmram` 内存池扩容至 `48 KB`（`LV_MEM_POOL_ALLOC` 绑定）、`ST7789` 实测非反显（`0x20 INVOFF`）与 `flush_wait_cb` 阻塞等 `lcdDmaSem` + 超时自恢复、`bsp_flash`/`app_cfg` 提前至 M2 落地并细化 API 签名。 |
 
 ---
 
@@ -24,7 +25,7 @@
 
 ### 1.1 编写目的
 
-本《软件详细设计文档（SDD）》直接面向编码实现与设计评审，将 `SE-F407-SAD-001`（V2.0）中的模块划分细化到**文件级数据结构、精确字段布局、函数 API 签名、状态机流转、中断/DMA 交互时序以及 STM32F407 硬件避坑要点**。开发前须依据第 7 章评审清单完成逐项核查，确保编码一次成型、避免后期推翻返工。
+本《软件详细设计文档（SDD）》直接面向编码实现与设计评审，将 `SE-F407-SAD-001`（V2.1）中的模块划分细化到**文件级数据结构、精确字段布局、函数 API 签名、状态机流转、中断/DMA 交互时序以及 STM32F407 硬件避坑要点**。开发前须依据第 7 章评审清单完成逐项核查，确保编码一次成型、避免后期推翻返工。
 
 ### 1.2 全局编码与错误码约定
 
@@ -53,7 +54,7 @@ typedef enum {
 1. **单锁短持**：全局仅 `sysMutex` 保护 `g_sys`；持锁时间严格 `< 20 µs`，**严禁**在持锁期间调用任何阻塞 IO（CAN/RS-485/Flash/TF/Socket/Delay）或嵌套取锁。
 2. **ISR 禁用 Mutex**：中断回调函数仅允许调用 `osMessageQueuePut(..., 0)`、`osSemaphoreRelease()`、`osThreadFlagsSet()` 等 ISR 安全接口。
 3. **LVGL 单线程铁律**：除 `HmiTask` 外的任何任务均**严禁**直接调用 `lv_*` 函数，全部通过更新 `g_sys` 间接刷新 UI。
-4. **DMA 禁入 CCMRAM**：仅 `g_lvgl_mem[32*1024]` 与 `g_trend` 加 `__attribute__((section(".ccmram")))`；其余栈、缓冲全留默认 128 KB 主 RAM。
+4. **DMA 禁入 CCMRAM**：仅 `g_lvgl_mem[48*1024]` 与 `g_trend` 加 `__attribute__((section(".ccmram")))`；其余栈、缓冲全留默认 128 KB 主 RAM。
 5. **HAL DMA 接收防半传输坑**：所有调用 `HAL_UARTEx_ReceiveToIdle_DMA()` 后必须立即调用 `__HAL_DMA_DISABLE_IT(huart->hdmarx, DMA_IT_HT)`，防止半传输中断提前截断 Modbus RTU 或 CLI 帧。
 
 ---
@@ -239,7 +240,7 @@ typedef struct {
 
 - **对外 API**：
   ```c
-  void     Bsp_FlashRead(uint32_t addr, void *buf, uint32_t len);
+  AppErr_t Bsp_FlashRead(uint32_t addr, void *buf, uint32_t len);
   AppErr_t Bsp_FlashEraseWriteSector11(const void *data, uint32_t len_bytes);
   ```
 - **内部逻辑（关键防踩坑）**：
@@ -285,15 +286,17 @@ typedef struct {
 
 - **对外 API**：
   ```c
-  void Bsp_LcdInit(void);
-  void Bsp_LcdSetBacklight(uint8_t pct); /* 0..100 -> TIM12->CCR1 */
-  void Bsp_LcdFlushDma(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2,
-                       const uint16_t *pixels, void (*done_cb)(void));
+  AppErr_t Bsp_LcdInit(void);
+  void     Bsp_LcdSetBacklight(uint8_t pct); /* 0..100 -> TIM12->CCR1 */
+  AppErr_t Bsp_LcdWaitIdle(uint32_t timeout_ms);
+  AppErr_t Bsp_LcdFlushDma(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2,
+                           const uint8_t *pixels, uint32_t byte_len,
+                           BspLcdFlushDoneCb_t done_cb);
   ```
 - **内部逻辑**：
-  - `Bsp_LcdInit()`：拉低 `PE14 (RST)` 20 ms → 拉高等待 120 ms → 发送 `0x11 (Sleep Out)` → 设 `MADCTL (0x36) = 0x70`（或按实物调整 `0xA0`/`0x60` 实现横屏 `320×240` RGB）→ `COLMOD (0x3A) = 0x55` (16-bit RGB565) → `INVON (0x21)` → `DISPON (0x29)` → 启动 `TIM12_CH1` PWM（2 kHz，ARR=999，`CCR1 = pct * 10`）。
-  - `Bsp_LcdFlushDma()`：先轮询发 `0x2A`（列地址）、`0x2B`（行地址）、`0x2C`（写显存）短命令 → 拉高 `PD9 (DC)`、保持 `PE15 (CS)` 为低 → 因 ST7789 SPI 为大端 RGB565，利用 LVGL v9 `lv_draw_sw_rgb565_swap(pixels, px_cnt)` 字节交换后，调用 `HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)pixels, px_cnt * 2)`（单次 `320×20×2 = 12800 B < 65535`，一次 DMA 完整发完）。
-  - `HAL_SPI_TxCpltCallback(&hspi2)`：拉高 `PE15 (CS)` → 调用 `done_cb()`（内部调 `lv_display_flush_ready(disp)`）并释放 `lcdDmaSemHandle`。
+  - `Bsp_LcdInit()`：先启动 `TIM12_CH1` PWM（2 kHz，ARR=999，`Pulse=0` 防开机花屏）→ 拉低 `PE14 (RST)` 20 ms → 拉高等待 120 ms → 发送 `0x11 (Sleep Out)` → 设 `MADCTL (0x36) = 0x70`（横屏 `320×240` RGB）→ `COLMOD (0x3A) = 0x55` (16-bit RGB565) → `INVOFF (0x20)`（适配本实物非反显 ST7789P3 模组，可经 `BSP_LCD_INVERT_COLOR` 切换）→ 清黑整屏 → `DISPON (0x29)`；首帧 LVGL 刷完后再按配置占空比开背光。
+  - `Bsp_LcdFlushDma()`：先轮询发 `0x2A`（列地址）、`0x2B`（行地址）、`0x2C`（写显存）短命令 → 拉高 `PD9 (DC)`、保持 `PE15 (CS)` 为低 → 依托 LVGL v9.6.0 原生 `LV_COLOR_FORMAT_RGB565_SWAPPED` 免 CPU 字节交换，直接调用 `HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)pixels, byte_len)`（单次 `320×20×2 = 12800 B < 65535`）；同步配合 LVGL `flush_wait_cb` 调用 `Bsp_LcdWaitIdle()` 阻塞等待 `lcdDmaSemHandle`（超时自动 `HAL_SPI_Abort` 自恢复）。
+  - `HAL_SPI_TxCpltCallback(&hspi2)`：拉高 `PE15 (CS)` → 清忙标志、释放 `lcdDmaSemHandle` 并调用 `done_cb()`（内部调 `lv_display_flush_ready(disp)`）。
 
 ### 4.6 `bsp_xpt2046`（软件 SPI + 5 点中值滤波 + 4 点校准）
 
@@ -367,13 +370,19 @@ typedef struct {
 
 - **对外 API**：
   ```c
-  void AppCfg_LoadDefault(AppConfig_t *cfg);
-  void AppCfg_LoadFromFlash(AppConfig_t *cfg);
-  void AppCfg_GetCurrent(AppConfig_t *out);
-  void AppCfg_UpdateTouchCal(const float cal[6]);
-  void AppCfg_MarkDirty(void);      /* 任意配置变更调用，重置 2s 计时器 */
-  void AppCfg_PollSave(void);       /* 由 defaultTask 每 1s 轮询调用 */
-  void AppCfg_FlushNow(void);       /* OTA 升级前强制立即落盘 */
+  void     AppCfg_LoadDefault(AppConfig_t *cfg);
+  uint8_t  AppCfg_Init(void);
+  void     AppCfg_GetCurrent(AppConfig_t *out);
+  uint8_t  AppCfg_IsLoadedFromFlash(void);
+  uint8_t  AppCfg_IsTouchCalibrated(void);
+  void     AppCfg_SyncRuntimeParams(int16_t start_x10, int16_t stop_x10,
+                                    uint16_t manual_rpm_def, uint8_t backlight_pct);
+  void     AppCfg_UpdateTouchCal(const float cal[6]);
+  void     AppCfg_MarkDirty(void);      /* 任意配置变更调用，重置 2s 计时器 */
+  AppErr_t AppCfg_PollSave(void);       /* 由 defaultTask 每 1s 轮询调用 */
+  AppErr_t AppCfg_FlushNow(void);       /* 立即写盘（含并发写盘有界等待） */
+  void     AppCfg_ApplyDefaultMemory(AppConfig_t *out_def);
+  AppErr_t AppCfg_ResetToDefault(void);
   ```
 - **防抖与擦写补偿逻辑**：
   - `AppCfg_PollSave()` 发现 `s_dirty && (now - s_dirty_tick >= 2000)`：从 `g_sys` 同步最新阈值/背光等字段计算 `crc32` → 调用 `Bsp_FlashEraseWriteSector11(&s_cfg, sizeof(s_cfg))` → 清除 `s_dirty` → **通知 `AppControl_ResetCanTimers()` 重置 CAN 心跳基准时间戳**（抵消 Sector 11 擦除 `1–2 s` 冻结，防止误报 CAN 失联）。
@@ -551,8 +560,8 @@ stateDiagram-v2
 
 - **内存与时钟绑定**：
   ```c
-  /* 仅此 32KB 内部堆放 CCMRAM（纯 CPU 访问，零 DMA） */
-  static uint8_t g_lvgl_mem[32U * 1024U] __attribute__((section(".ccmram"), aligned(8)));
+  /* 仅此 48KB 内部堆放 CCMRAM（纯 CPU 访问，零 DMA） */
+  static uint8_t g_lvgl_mem[48U * 1024U] __attribute__((section(".ccmram"), aligned(8)));
   /* 双部分刷屏缓冲放默认主 RAM（走 SPI2 DMA1 Stream4） */
   static uint16_t s_lcd_buf1[320U * 20U]; /* 12.5 KB */
   static uint16_t s_lcd_buf2[320U * 20U]; /* 12.5 KB */
@@ -641,6 +650,9 @@ stateDiagram-v2
 | `wdt hang <task>` | `<task>` 为 `control`/`fansim`/`sensor`/`net`/`hmi`/`monitor`，置位 `g_hang_inject_mask` 对应位令目标任务死循环 |
 | `sntp sync` | 置位 `g_sntp_force_sync = 1` 通知 `NetTask` 立即重启一次 SNTP 请求 |
 | `rtc set YYYY-MM-DD HH:MM:SS` | 手动设置本地硬件 RTC 时间并置位 `RTC_BKP_DR0` 已校准魔数（M1 即可验证） |
+| `bl <10..100>` | 串口设置 LCD 背光占空比并触发 2 s 防抖落盘（M2 验证辅助） |
+| `touch cal` | 跨任务置位校准请求标志，由 `HmiTask` 拉起全屏 4 点触摸校准向导（M2 验证辅助） |
+| `cfg save` / `cfg reset` | 立即将当前配置刷盘至 Sector 11 / 恢复出厂默认值并落盘（M2 验证辅助） |
 | `reboot` | 触发 `NVIC_SystemReset()` 软件复位，用于验证 `SW` 复位原因与 RTC 走时保持 |
 | `ota enter` | 调用 `App_OtaRequestUpgrade()` |
 
@@ -667,7 +679,7 @@ stateDiagram-v2
 | **DR-03** | RS-485 在 `TXE` 时拉低 `PD4` 会截断最后一字节停止位，导致 KTH2-R CRC 校验失败无应答                    | 严格在 `HAL_UART_TxCpltCallback`（`TC` 发送完全结束中断）内拉低 `PD4`                                                      | `bsp_rs485`                           |
 | **DR-04** | 无网线开机时若 `MX_ETH_Init` 死等 Link Up 且 IWDG 已启动，会导致无限看门狗重启                        | ETH 初始化不阻塞等待网线，Link 状态由 `NetTask` 异步轮询；IWDG 在调度启动后由 `defaultTask` 开启                                       | `bsp_eth`, `app_net`, `app_monitor`   |
 | **DR-05** | STM32F407 `SDIO` 开启硬件流控存在硅片勘误易偶发卡死；且 SDIO 中断优先级若低于 DMA 会导致 `f_write` 死锁       | 强制 `HardwareFlowControl = DISABLE`、`ClockDiv = 2 (12 MHz)`、`SDIO_IRQn (5) < DMA2_S3/S6 (6)`                | `bsp_sdcard`, CubeMX                  |
-| **DR-06** | `CCMRAM` 不支持 DMA，若误把任务栈或 FatFs/SPI/ETH 缓冲放进 CCMRAM 会静默失败或触发 DMA TEIF          | 仅 `g_lvgl_mem[32KB]` 与 `g_trend` 放 `.ccmram`，其余任务栈与全部外设缓冲留在默认 128 KB 主 RAM                                 | `app_hmi`, `app_data`                 |
+| **DR-06** | `CCMRAM` 不支持 DMA，若误把任务栈或 FatFs/SPI/ETH 缓冲放进 CCMRAM 会静默失败或触发 DMA TEIF          | 仅 `g_lvgl_mem[48KB]` 与 `g_trend` 放 `.ccmram`，其余任务栈与全部外设缓冲留在默认 128 KB 主 RAM                                 | `app_hmi`, `app_data`                 |
 | **DR-07** | 上位机用 `0x10` 同时把阈值从 `30/27` 改到 `25/22`，逐寄存器校验会因临时出现 `25 < 27` 而误拒              | `ModbusTcp_HandleFrame` 对 `0x10` 批量写阈值先合并新值再一次性调 `AppCtrl_SetThresholds()`                                 | `app_modbus_tcp`                      |
 | **DR-08** | LVGL 内置 `Montserrat` 字体不含 CJK 符号 `℃` (`U+2103`)，直接写 `"℃"` 会显示方框               | 界面统一使用 `"°C"`（`U+00B0` 已内置）或 `"C"`，全部文案纯英文零缺字                                                              | `ui_*`                                |
 | **DR-09** | `PA7 (ETH_CRS_DV)` 与板载选贴 SPI Flash `U5` 共线；`CAN2` 脱离 `CAN1` 时钟无法接收            | `Bsp_SysEarlyInit()` 在 `MX_ETH_Init()` 前拉高 `PA4`；`Bsp_CanInit()` 先使能 `CAN1` 并设 `SlaveStartFilterBank = 14` | `bsp_sys`, `bsp_can`                  |
@@ -688,7 +700,7 @@ stateDiagram-v2
 |   阶段   | 编码与联调范围                                                                                                    | 里程碑验收通过标准                                                                                                        |
 | :----: | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | **M1** | CubeMX 生成基础工程 + `bsp_sys` + `bsp_uart_cli` + `app_cli` + `app_monitor`（暂不启 IWDG）                           | CMake 编译通过、LED2 1 Hz 闪烁、USART1 串口 `help`/`status` 正常收发、上电正确打印复位原因                                                |
-| **M2** | `bsp_st7789` + `bsp_xpt2046` + LVGL v9（`.ccmram` 32 KB 堆）+ `app_hmi` / `ui_*`                              | 横屏 `320×240` 三页面切换流畅、DMA 异步刷屏无花屏、背光 PWM 可调、4 点校准生效并能掉电保存至 Sector 11                                              |
+| **M2** | `bsp_st7789` + `bsp_xpt2046` + `bsp_flash` + `app_cfg` + LVGL v9（`.ccmram` 48 KB 堆）+ `app_hmi` / `ui_*` | 横屏 `320×240` 三页面切换流畅、DMA 异步刷屏无花屏、背光 PWM 可调、4 点校准与阈值/背光生效并能掉电保存至 Sector 11 |
 | **M3** | `bsp_rs485` + `app_modbus_rtu` + `SensorTask` + `bsp_can` + `app_can_proto` + `ControlTask` + `FanSimTask` | 真实读取 KTH2-R 温湿度、升温/降温验证 `30/27 °C` 自动滞回线性调速、拔传感器验证 `1500 RPM` 安全降级、CLI 触发/清除三类 CAN 故障界面精准区分                      |
 | **M4** | `bsp_eth` + CubeMX LwIP + `app_modbus_tcp` + `NetTask`（含 SNTP）                                             | `ping 192.168.1.100` 稳定不丢包、Modbus Poll 读写寄存器正常（自动模式写 `0x0101` 返回 `0x04`）、联网自动 SNTP 校时、断电重启 RTC 继续走时              |
 | **M5** | `bsp_sdcard` + CubeMX FatFs + `LogTask` + `app_cfg` + 开启 IWDG + `app_ota`/`app_pm` 桩                       | TF 卡生成按日 CSV 且拔卡不死机、保存阈值/校准不断联不复位、`wdt hang control` 约 `4 s` 硬件复位并准确上报 `IWDG (CTRL)`，对照 SRS `AT-01`~`AT-10` 全部通过 |

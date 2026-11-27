@@ -21,7 +21,7 @@
 
 ## 开发路线（M1–M5）
 
-- [ ] **M1**：STM32CubeMX 原生 CMake 工程骨架、`USART1` CLI 与复位原因检测
+- [x] **M1**：STM32CubeMX 原生 CMake 工程骨架、`USART1` CLI 与复位原因检测
 - [ ] **M2**：`ST7789` + `XPT2046` + `LVGL v9` 纯英文三页面与 4 点触摸校准
 - [ ] **M3**：`RS-485`（`KTH2-R`）采集 + 双路物理 `CAN` 闭环控制与三类故障注入
 - [ ] **M4**：`LAN8720` 以太网、`Modbus TCP` 服务与 `SNTP` / `RTC` 校时

@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | **文档编号** | `SE-F407-SAD-001` |
-| **文档版本** | `V2.0` |
+| **文档版本** | `V2.1` |
 | **文档状态** | 基线发布（Baseline） |
 | **项目定位** | 大学生嵌入式综合学习与实战开发项目（简洁清晰、零过度设计、直接贴合 STM32CubeMX 工程落地） |
 | **工程根目录** | `D:\SmartEdge_F407`（直接作为 STM32CubeMX 工程根目录，所有文件延续 CubeMX 风格） |
@@ -18,6 +18,7 @@
 | --- | --- | --- |
 | `V1.0` | 2026-11-25 | 初版完整软件架构设计文档。 |
 | `V2.0` | 2026-11-25 | 调整为务实精简的 CubeMX 原生工程架构：根目录直接为 CubeMX CMake 工程，FreeRTOS/LwIP/FatFs 全由 CubeMX 生成，沿用默认 `.ld` 链接脚本与 `Inc/Src` 目录风格，精简任务通信、配置存储（Sector 11 单结构体）、TF 日志与低功耗预留实现复杂度。 |
+| `V2.1` | 2026-11-27 | 根据 M2 实测（LVGL v9.6.0 渲染栈深与内存占用）将 `HmiTask` 栈扩容至 `1536 Words (6144 B)`、`defaultTask` 栈扩容至 `384 Words (1536 B)`（总堆保持 `36864 B`），并将 `.ccmram` 中 LVGL 内部内存池由 `32 KB` 扩容至 `48 KB`。 |
 
 ---
 
@@ -38,7 +39,7 @@
 | :---: | --- | --- |
 | 1 | **构建与目录** | CubeMX 原生 CMake 导出 + ARM GCC (VS Code)，纯 C11；根目录 `D:\SmartEdge_F407` 下新增 `BSP/(Inc,Src)`、`App/(Inc,Src)`，LVGL 放 `Middlewares/Third_Party/lvgl/` |
 | 2 | **中间件与协议** | CubeMX 自动生成 **FreeRTOS (CMSIS-RTOS v2)**、**LwIP (BSD Socket)**、**FatFs**；Modbus RTU 主站与 Modbus TCP 从站采用**自研轻量 C 模块** |
-| 3 | **RAM 内存策略** | 直接沿用 CubeMX 默认 `.ld`（`128 KB` 主 RAM + `64 KB` CCMRAM）：仅把 **LVGL v9 内部内存池（32 KB）和趋势数组**放 `.ccmram`，其余 FreeRTOS 堆、LwIP、FatFs、ETH 与刷屏缓冲全部留默认 `128 KB` 主 RAM |
+| 3 | **RAM 内存策略** | 直接沿用 CubeMX 默认 `.ld`（`128 KB` 主 RAM + `64 KB` CCMRAM）：仅把 **LVGL v9 内部内存池（48 KB）和趋势数组**放 `.ccmram`，其余 FreeRTOS 堆、LwIP、FatFs、ETH 与刷屏缓冲全部留默认 `128 KB` 主 RAM |
 | 4 | **任务创建与通信** | 全部业务任务、互斥锁、队列均在 **CubeMX FreeRTOS 界面配置生成**（`Core/Src/freertos.c`），任务入口调用 `App/Src/` 业务函数；数据共享采用 **全局结构体 `g_sys` + 1 把 `sysMutex` + 带校验的短锁读写函数**，省去复杂 RPC 命令信号量 |
 | 5 | **自动调速与协议** | 自动滞回 + **温差线性调速**（`T_start` 起 `1200–3000 RPM`，滞回维持 `1000 RPM`，失效安全降级 `1500 RPM`）；CAN 4 帧标准协议（`0x101/0x201/0x202/0x701` @ `500 kbps`）；Modbus TCP 端口 `502`，默认静态 IP（`192.168.1.100`，支持切 DHCP），自动模式拒写手动启停返回异常码 `0x04` |
 | 6 | **本地触控 HMI** | 横屏 **`320 × 240`** + **纯英文界面**（仅启用 LVGL 内置 `Montserrat` 字体，不引入外部/中文字库）+ 主 RAM 双部分刷屏缓冲（`2 × 12.5 KB = 25 KB`）走 SPI2 DMA 异步刷新 + XPT2046 4 点校准 |
@@ -168,12 +169,12 @@ D:\SmartEdge_F407\
 
 | CubeMX 任务名 (`Task Name`) | 优先级 (`Priority`) | 栈大小 (`Words` / `Bytes`) | 入口函数 (`Entry Function`) | 对应 `App/Src` 业务职责 | IWDG 监督位 |
 | --- | :---: | :---: | --- | --- | :---: |
-| `defaultTask` | `osPriorityHigh` | `256` (`1024 B`) | `StartDefaultTask` → `App_MonitorTask()` | 看门狗 5 任务巡检喂狗、LED2 闪烁、2s 防抖配置落盘 | 喂狗主体 |
+| `defaultTask` | `osPriorityHigh` | `384` (`1536 B`) | `StartDefaultTask` → `App_MonitorTask()` | 看门狗 5 任务巡检喂狗、LED2 闪烁、2s 防抖配置落盘 | 喂狗主体 |
 | `ControlTask` | `osPriorityAboveNormal2` | `512` (`2048 B`) | `StartControlTask` → `App_ControlTask()` | 自动滞回/线性温控、CAN1 指令下发与三类故障判定 | `bit0` |
 | `FanSimTask` | `osPriorityAboveNormal` | `384` (`1536 B`) | `StartFanSimTask` → `App_FanSimTask()` | CAN2 独立模拟风扇节点、转速斜坡、心跳与故障注入 | `bit1` |
 | `SensorTask` | `osPriorityNormal2` | `384` (`1536 B`) | `StartSensorTask` → `App_SensorTask()` | RS-485 Modbus RTU 每秒轮询 KTH2-R、断线判定 | `bit2` |
 | `NetTask` | `osPriorityNormal1` | `1024` (`4096 B`) | `StartNetTask` → `App_NetTask()` | PHY Link 监测、SNTP 校时、BSD Socket `select()` Modbus TCP | `bit3` |
-| `HmiTask` | `osPriorityNormal` | `1024` (`4096 B`) | `StartHmiTask` → `App_HmiTask()` | LVGL v9 `lv_timer_handler()`、XPT2046 采样、UI 刷新 | `bit4` |
+| `HmiTask` | `osPriorityNormal` | `1536` (`6144 B`) | `StartHmiTask` → `App_HmiTask()` | LVGL v9 `lv_timer_handler()`、XPT2046 采样、UI 刷新 | `bit4` |
 | `LogTask` | `osPriorityBelowNormal` | `768` (`3072 B`) | `StartLogTask` → `App_LogTask()` | `PD3` 热插拔、FatFs 按日写 CSV 并立即 `f_sync()` | 不监督（防卡死拖垮） |
 | `CliTask` | `osPriorityLow` | `512` (`2048 B`) | `StartCliTask` → `App_CliTask()` | USART1 调试命令解析、故障与任务卡死注入 | 不监督 |
 
@@ -196,7 +197,7 @@ D:\SmartEdge_F407\
 | 存储区域 | 总容量 | 预估占用 | 剩余裕量 | 分配说明 |
 | --- | :---: | :---: | :---: | --- |
 | **主 RAM** (`0x2000_0000`) | `128 KB` | `~100 KB` | **`~28 KB` (22%)** | FreeRTOS `ucHeap` (`36 KB`) + CubeMX LwIP ETH 描述符与缓冲 (`~13 KB`) + LwIP 堆与 PBUF (`~14 KB`) + **LVGL SPI2 DMA 双部分刷屏缓冲** (`2 × 320×20×2 B = 25 KB`) + FatFs/USART 缓冲与 `.data`/`.bss` (`~12 KB`) |
-| **CCMRAM** (`0x1000_0000`) | `64 KB` | `~36 KB` | **`~28 KB` (44%)** | 仅放两处纯 CPU 数据（加 `__attribute__((section(".ccmram")))`）：<br>1. LVGL v9 动态内存池 `g_lvgl_mem[32 * 1024]`（`32 KB`，配置 `LV_MEM_ADR`）<br>2. 历史趋势环形数组（`120` 点温湿度/转速，`~4 KB`） |
+| **CCMRAM** (`0x1000_0000`) | `64 KB` | `~49 KB` | **`~15 KB` (23%)** | 仅放两处纯 CPU 数据（加 `__attribute__((section(".ccmram")))`）：<br>1. LVGL v9 动态内存池 `g_lvgl_mem[48 * 1024]`（`48 KB`，通过 `LV_MEM_POOL_ALLOC` 绑定）<br>2. 历史趋势环形数组（`120` 点温湿度/转速，`724 B`） |
 | **Flash 代码区** (`0x0800_0000` 起) | `896 KB` (Sector 0–10) | `~190–230 KB` | **`> 660 KB`** | 应用程序全部代码 + LVGL 内置英文字体（`Montserrat` 12/14/16/24），不引入外部字库，与末尾 Sector 11 距离极远 |
 | **Flash 配置区** (`Sector 11`, `0x080E_0000`) | `128 KB` | `128 B` 有效结构体 | 独立扇区 | 存放 `AppConfig_t` 掉电参数（阈值、触摸校准、网络配置、背光） |
 
@@ -322,7 +323,7 @@ sequenceDiagram
 ### 5.3 本地触控 HMI 模块（`HmiTask` + `ui_*` + `bsp_st7789` + `bsp_xpt2046`）
 
 - **显示刷新**：ST7789 配为横屏 **`320 × 240`**；在默认主 RAM 定义双缓冲 `uint16_t lcd_buf1[320*20]`、`lcd_buf2[320*20]`（共 `25 KB`，整除 240 高为 12 片）；`disp_flush` 设窗口后启动 `HAL_SPI_Transmit_DMA(&hspi2, ...)`，DMA 完成中断回调释放 `lcdDmaSem` 并调用 `lv_display_flush_ready()`。
-- **字体与内存**：LVGL 内存池 `32 KB` 放 `.ccmram`；界面统一采用**纯英文 + LVGL 内置字体**（在 `lv_conf.h` 启用 `LV_FONT_MONTSERRAT_12/14/16/24` 即可，不引入任何外部字库，完全不依赖 TF 卡；温度单位使用内置支持的 `"°C"` 或 `"C"`，勿用 CJK 符号 `℃` 以防缺字）。
+- **字体与内存**：LVGL 内存池 `48 KB` 放 `.ccmram`；界面统一采用**纯英文 + LVGL 内置字体**（在 `lv_conf.h` 启用 `LV_FONT_MONTSERRAT_12/14/16/24` 即可，不引入任何外部字库，完全不依赖 TF 卡；温度单位使用内置支持的 `"°C"` 或 `"C"`，勿用 CJK 符号 `℃` 以防缺字）。
 - **触摸与校准**：XPT2046 软件 SPI 每 `20 ms` 由 LVGL 输入回调轮询，按下时采 5 点去极值取平均；校准页引导点击屏幕 4 个靶点计算线性仿射系数并存入 `AppConfig_t` 掉电保存。
 - **三页面结构**：顶栏（`AUTO/MAN/SAFE` 模式、`485/CAN/ETH/TF` 状态与 RTC 时钟）+ 底栏三页切换（**`Overview`** / **`Trend`** / **`Diag`**），每 `250 ms` 拉一次 `AppData_GetSnapshot()`，仅数值变化时更新控件。
 
@@ -403,4 +404,4 @@ flowchart TD
 5. **ETH + SPI Flash 隔离**：ETH 选 RMII，PHY 地址设 `1`，`PA4` 配为 GPIO Output 默认 `High`（且在 `Bsp_SysEarlyInit` 中抢先置高）。
 6. **CAN1 / CAN2**：波特率同设 `500 kbps`，均开启 RX 中断（CAN1 用 FIFO0，CAN2 用 FIFO1），代码中先开 CAN1 时钟并设 `SlaveStartFilterBank = 14`。
 7. **RS-485 (`USART2`)**：开启 TX/RX DMA（DMA1 Stream5/6）与全局中断，发送完成后必须在 `HAL_UART_TxCpltCallback`（TC）中拉低 `PD4`。
-8. **内存与栈检测**：LVGL 内部堆 `32 KB` 与趋势数组加 `__attribute__((section(".ccmram")))`；FreeRTOS `TOTAL_HEAP_SIZE = 36864` 并开启栈溢出检测钩子 `vApplicationStackOverflowHook` 串口打印报错。
+8. **内存与栈检测**：LVGL 内部堆 `48 KB` 与趋势数组加 `__attribute__((section(".ccmram")))`；FreeRTOS `TOTAL_HEAP_SIZE = 36864` 并开启栈溢出检测钩子 `vApplicationStackOverflowHook` 串口打印报错。
