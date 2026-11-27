@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_monitor.h"
 #include "app_cli.h"
+#include "app_hmi.h"
 #include "bsp_uart_cli.h"
 /* USER CODE END Includes */
 
@@ -53,7 +54,7 @@
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 256 * 4,
+  .stack_size = 384 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for CliTask */
@@ -63,10 +64,22 @@ const osThreadAttr_t CliTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for HmiTask */
+osThreadId_t HmiTaskHandle;
+const osThreadAttr_t HmiTask_attributes = {
+  .name = "HmiTask",
+  .stack_size = 1536 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for sysMutex */
 osMutexId_t sysMutexHandle;
 const osMutexAttr_t sysMutex_attributes = {
   .name = "sysMutex"
+};
+/* Definitions for lcdDmaSem */
+osSemaphoreId_t lcdDmaSemHandle;
+const osSemaphoreAttr_t lcdDmaSem_attributes = {
+  .name = "lcdDmaSem"
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -76,6 +89,7 @@ const osMutexAttr_t sysMutex_attributes = {
 
 void StartDefaultTask(void *argument);
 void StartCliTask(void *argument);
+void StartHmiTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -127,6 +141,10 @@ void MX_FREERTOS_Init(void) {
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of lcdDmaSem */
+  lcdDmaSemHandle = osSemaphoreNew(1, 0, &lcdDmaSem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -145,6 +163,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of CliTask */
   CliTaskHandle = osThreadNew(StartCliTask, NULL, &CliTask_attributes);
+
+  /* creation of HmiTask */
+  HmiTaskHandle = osThreadNew(StartHmiTask, NULL, &HmiTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -184,6 +205,21 @@ void StartCliTask(void *argument)
   (void)argument;
   App_CliTask();
   /* USER CODE END StartCliTask */
+}
+
+/* USER CODE BEGIN Header_StartHmiTask */
+/**
+* @brief Function implementing the HmiTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartHmiTask */
+void StartHmiTask(void *argument)
+{
+  /* USER CODE BEGIN StartHmiTask */
+  (void)argument;
+  App_HmiTask();
+  /* USER CODE END StartHmiTask */
 }
 
 /* Private application code --------------------------------------------------*/
