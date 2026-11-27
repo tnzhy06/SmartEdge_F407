@@ -21,12 +21,15 @@
 #include "cmsis_os.h"
 #include "dma.h"
 #include "rtc.h"
+#include "spi.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bsp_sys.h"
+#include "app_cfg.h"
 #include "app_data.h"
 /* USER CODE END Includes */
 
@@ -96,9 +99,16 @@ int main(void)
   MX_DMA_Init();
   MX_RTC_Init();
   MX_USART1_UART_Init();
+  MX_SPI2_Init();
+  MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
-  /* 初始化全局共享状态中心（装载安全默认值与本次启动复位原因） */
-  AppData_Init(Bsp_SysGetResetReason(), Bsp_SysGetHungTaskMask());
+  /* 尝试从 Flash Sector 11 加载掉电配置（失败回退安全默认），再初始化全局状态中心 */
+  {
+    AppConfig_t boot_cfg;
+    (void)AppCfg_Init();
+    AppCfg_GetCurrent(&boot_cfg);
+    AppData_Init(&boot_cfg, Bsp_SysGetResetReason(), Bsp_SysGetHungTaskMask());
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */

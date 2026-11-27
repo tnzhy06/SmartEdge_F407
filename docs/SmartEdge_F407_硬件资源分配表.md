@@ -105,7 +105,7 @@ flowchart LR
 | 内存区域 | 地址范围 | 容量 | 推荐分配对象 | 硬件约束说明 |
 | --- | --- | :---: | --- | --- |
 | **主 RAM（SRAM1 + SRAM2）** | `0x2000_0000`–`0x2001_FFFF` | `128 KB` | FreeRTOS `ucHeap`（`36 KB`）、CubeMX LwIP ETH 描述符与收发缓冲（`~13 KB`）、LwIP 堆与 PBUF（`~14 KB`）、LVGL SPI2 DMA 双部分刷屏缓冲（`25 KB`）、FatFs、USART1/2 DMA 缓冲及 `.data`/`.bss` | 全部支持 DMA1/DMA2 与 ETH DMA 访问，零改动 CubeMX 生成代码 |
-| **CCMRAM** | `0x1000_0000`–`0x1000_FFFF` | `64 KB` | 仅放纯 CPU 数据（`__attribute__((section(".ccmram")))`）：**LVGL v9 内部对象内存池（`32 KB`）** + **历史趋势环形缓存（`~4 KB`）** | **严禁**将 SPI2、SDIO、USART、ETH 的 DMA 缓冲区或任务栈（涉及 FatFs/DMA）放入 CCMRAM |
+| **CCMRAM** | `0x1000_0000`–`0x1000_FFFF` | `64 KB` | 仅放纯 CPU 数据（`__attribute__((section(".ccmram")))`）：**LVGL v9 内部对象内存池（`48 KB`）** + **历史趋势环形缓存（`~1 KB`）** | **严禁**将 SPI2、SDIO、USART、ETH 的 DMA 缓冲区或任务栈（涉及 FatFs/DMA）放入 CCMRAM |
 | **RTC 备份寄存器** | `RTC_BKP_DR0`–`DR19` | `80 B` | `DR0`：RTC 已初始化魔数；`DR1`：上次复位原因编码；`DR2`：IAP/OTA 升级请求魔数；`DR3`：IWDG 卡死任务位图快照 | 需开启 PWR 时钟与备份域写使能（`HAL_PWR_EnableBkUpAccess`）；断电由 VBAT 保持 |
 
 ---

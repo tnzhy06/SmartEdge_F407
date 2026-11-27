@@ -1,12 +1,14 @@
 /**
  * @file    app_cli.c
- * @brief   串口调试命令行任务（CliTask）M1 阶段实现
- * @date    2026-11-26
- * @note    依赖 bsp_uart_cli、bsp_sys、app_data 与 FreeRTOS 任务栈统计接口
+ * @brief   串口调试命令行任务（CliTask）M2 阶段实现
+ * @date    2026-11-27
+ * @note    依赖 bsp_uart_cli、bsp_sys、app_data、app_cfg、app_hmi 与 FreeRTOS 任务栈统计接口
  */
 
 #include "app_cli.h"
+#include "app_cfg.h"
 #include "app_data.h"
+#include "app_hmi.h"
 #include "bsp_sys.h"
 #include "bsp_uart_cli.h"
 #include "cmsis_os.h"
@@ -18,6 +20,7 @@
 /** @brief CubeMX 在 Core/Src/freertos.c 中创建的任务句柄（供栈水位监控） */
 extern osThreadId_t defaultTaskHandle;
 extern osThreadId_t CliTaskHandle;
+extern osThreadId_t HmiTaskHandle;
 
 /** @brief 单行命令最大缓存长度（字节） */
 #define CLI_LINE_MAX 128U
@@ -52,29 +55,36 @@ static uint8_t ParseDigits(const char *s, uint8_t len, uint16_t *out)
 }
 
 /**
- * @brief  处理 "help" 命令：打印 M1 阶段可用命令清单
+ * @brief  处理 "help" 命令：打印 M2 阶段可用命令清单
  */
 static void CmdHelp(void)
 {
-  Bsp_CliPrintf("Available commands (M1):\r\n");
+  Bsp_CliPrintf("Available commands (M2):\r\n");
   Bsp_CliPrintf("  help                              - Show this help\r\n");
-  Bsp_CliPrintf("  status                            - Show reset/RTC/GPIO/RTOS status\r\n");
+  Bsp_CliPrintf("  status                            - Show reset/RTC/HMI/CFG/RTOS status\r\n");
   Bsp_CliPrintf("  rtc set YYYY-MM-DD HH:MM:SS       - Set RTC date & time\r\n");
+  Bsp_CliPrintf("  bl <10..100>                      - Set LCD backlight brightness (%%)\r\n");
+  Bsp_CliPrintf("  touch cal                         - Launch 4-point touch calibration\r\n");
+  Bsp_CliPrintf("  cfg save                          - Flush config to Sector 11 now\r\n");
+  Bsp_CliPrintf("  cfg reset                         - Restore default config & save\r\n");
   Bsp_CliPrintf("  reboot                            - Trigger software reset (SW)\r\n");
 }
 
 /**
- * @brief  处理 "status" 命令：打印复位原因、RTC、引脚状态与 FreeRTOS 堆/栈水位
+ * @brief  处理 "status" 命令：打印复位原因、RTC、控制参数、HMI 内存与 FreeRTOS 堆/栈水位
  */
 static void CmdStatus(void)
 {
   AppState_t snap;
+  AppHmiMemStats_t lv_mem;
   BspDateTime_t dt = {0};
   AppErr_t rtc_err;
   uint32_t mon_wm = 0U;
   uint32_t cli_wm = 0U;
+  uint32_t hmi_wm = 0U;
 
   AppData_GetSnapshot(&snap);
+  AppHmi_GetMemStats(&lv_mem);
   rtc_err = Bsp_RtcGetDateTime(&dt);
 
   /* 读取任务剩余最小栈空间（单位：Words，乘 4 为 Bytes），便于验证栈预算是否充裕 */
@@ -86,8 +96,12 @@ static void CmdStatus(void)
   {
     cli_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)CliTaskHandle);
   }
+  if (HmiTaskHandle != NULL)
+  {
+    hmi_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)HmiTaskHandle);
+  }
 
-  Bsp_CliPrintf("---- SmartEdge_F407 Status (M1) ----\r\n");
+  Bsp_CliPrintf("---- SmartEdge_F407 Status (M2) ----\r\n");
   Bsp_CliPrintf(" Reset   : %s (code=%u, hung=0x%02X)\r\n",
                 Bsp_SysResetReasonStr((ResetReason_t)snap.reset_reason),
                 (unsigned int)snap.reset_reason,
@@ -105,16 +119,32 @@ static void CmdStatus(void)
   {
     Bsp_CliPrintf(" RTC     : READ_ERR (%d)\r\n", (int)rtc_err);
   }
+  Bsp_CliPrintf(" Ctrl    : Mode=%s | FanSt=%u | ManRun=%u | ManRPM=%u | ActRPM=%u\r\n",
+                (snap.ctrl_mode == CTRL_MODE_MANUAL) ? "MAN" : "AUTO",
+                (unsigned int)snap.fan_state,
+                (unsigned int)snap.manual_run,
+                (unsigned int)snap.manual_target_rpm,
+                (unsigned int)snap.actual_rpm);
+  Bsp_CliPrintf(" Config  : Src=%s | T_ON=%d.%d C | T_OFF=%d.%d C | BL=%u%% | Cal=%u\r\n",
+                (AppCfg_IsLoadedFromFlash() != 0U) ? "Sector11" : "DEFAULT",
+                (int)(snap.temp_start_x10 / 10), (int)(snap.temp_start_x10 % 10),
+                (int)(snap.temp_stop_x10 / 10), (int)(snap.temp_stop_x10 % 10),
+                (unsigned int)snap.backlight_pct,
+                (unsigned int)AppCfg_IsTouchCalibrated());
   Bsp_CliPrintf(" GPIO    : LED2=%u | KEY(PA0)=%u | FLASH_CS(PA4)=%u\r\n",
                 (unsigned int)Bsp_LedIsOn(),
                 (unsigned int)Bsp_KeyIsPressed(),
                 (unsigned int)Bsp_FlashGuardIsHigh());
+  Bsp_CliPrintf(" LVGLMem : Used=%u%% | Free=%lu/%lu B | MaxUsed=%lu B (CCMRAM)\r\n",
+                (unsigned int)lv_mem.used_pct,
+                (unsigned long)lv_mem.free_bytes,
+                (unsigned long)lv_mem.total_bytes,
+                (unsigned long)lv_mem.max_used);
   Bsp_CliPrintf(" RTOS    : FreeHeap=%lu B (MinEver=%lu B)\r\n",
                 (unsigned long)xPortGetFreeHeapSize(),
                 (unsigned long)xPortGetMinimumEverFreeHeapSize());
-  Bsp_CliPrintf(" StackWM : defaultTask=%lu W (%lu B) | CliTask=%lu W (%lu B)\r\n",
-                (unsigned long)mon_wm, (unsigned long)(mon_wm * 4U),
-                (unsigned long)cli_wm, (unsigned long)(cli_wm * 4U));
+  Bsp_CliPrintf(" StackWM : Mon=%lu W | Cli=%lu W | Hmi=%lu W\r\n",
+                (unsigned long)mon_wm, (unsigned long)cli_wm, (unsigned long)hmi_wm);
 }
 
 /**
@@ -172,6 +202,45 @@ static void CmdRtcSet(const char *arg)
 }
 
 /**
+ * @brief  处理 "bl <10..100>" 命令：设置屏幕背光亮度并标记配置保存
+ * @param[in] arg 亮度数字参数字符串
+ */
+static void CmdBacklight(const char *arg)
+{
+  size_t len;
+  uint16_t pct = 0U;
+
+  if (arg == NULL)
+  {
+    Bsp_CliPrintf("Usage: bl <10..100>\r\n");
+    return;
+  }
+
+  len = strlen(arg);
+  if ((len < 1U) || (len > 3U) || (ParseDigits(arg, (uint8_t)len, &pct) == 0U))
+  {
+    Bsp_CliPrintf("Usage: bl <10..100>\r\n");
+    return;
+  }
+
+  /* 必须在缩窄强转 uint8_t 之前完成上界检查，防止如 bl 300 截断为 44 绕过合法性校验 */
+  if ((pct < APP_BACKLIGHT_MIN_PCT) || (pct > APP_BACKLIGHT_MAX_PCT))
+  {
+    Bsp_CliPrintf("Error: backlight must be in 10..100.\r\n");
+    return;
+  }
+
+  if (AppCtrl_SetBacklight((uint8_t)pct) == APP_OK)
+  {
+    Bsp_CliPrintf("Backlight set to %u%% (auto-save in 2s).\r\n", (unsigned int)pct);
+  }
+  else
+  {
+    Bsp_CliPrintf("Error: backlight must be in 10..100.\r\n");
+  }
+}
+
+/**
  * @brief  解析并分发单行串口命令（自动裁剪首尾空白字符）
  * @param[in,out] line 已去除首尾换行符的可修改命令字符串
  */
@@ -207,6 +276,42 @@ static void DispatchLine(char *line)
   else if (strncmp(line, "rtc set ", 8U) == 0)
   {
     CmdRtcSet(line + 8U);
+  }
+  else if (strncmp(line, "bl ", 3U) == 0)
+  {
+    CmdBacklight(line + 3U);
+  }
+  else if (strcmp(line, "touch cal") == 0)
+  {
+    AppHmi_RequestTouchCal();
+    Bsp_CliPrintf("4-point touch calibration requested.\r\n");
+  }
+  else if (strcmp(line, "cfg save") == 0)
+  {
+    if (AppCfg_FlushNow() == APP_OK)
+    {
+      Bsp_CliPrintf("Config flushed to Sector 11.\r\n");
+    }
+    else
+    {
+      Bsp_CliPrintf("Error: failed to save config to Sector 11.\r\n");
+    }
+  }
+  else if (strcmp(line, "cfg reset") == 0)
+  {
+    AppConfig_t def;
+
+    /* 先同步重置 s_cfg、触摸矩阵、g_sys 与背光硬件，再立即落盘，避免写盘期间/失败产生半重置分裂 */
+    AppCfg_ApplyDefaultMemory(&def);
+    AppData_ApplyConfig(&def);
+    if (AppCfg_FlushNow() == APP_OK)
+    {
+      Bsp_CliPrintf("Config restored to defaults and saved.\r\n");
+    }
+    else
+    {
+      Bsp_CliPrintf("Config restored in RAM; Sector 11 save will retry in 2s.\r\n");
+    }
   }
   else if (strcmp(line, "reboot") == 0)
   {

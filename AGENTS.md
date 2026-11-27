@@ -114,7 +114,7 @@ HAL_GPIO_WritePin(RS485_DE_GPIO_Port, RS485_DE_Pin, GPIO_PIN_RESET);
 Agent 编写或修改任何驱动/任务代码时，必须逐条守住以下硬件与 RTOS 红线（详见 `SDD` 第 7.1 节）：
 
 1. **HAL 时基**：必须使用 `TIM6`，严禁使用 `SysTick`。
-2. **CCMRAM 禁 DMA**：仅 `g_lvgl_mem[32*1024]` 和 `g_trend` 放入 `.ccmram`；所有任务栈与 DMA/FatFs/LwIP/ETH/SPI/UART 缓冲必须位于默认 128 KB 主 RAM。
+2. **CCMRAM 禁 DMA**：仅 `g_lvgl_mem[48*1024]` 和 `g_trend` 放入 `.ccmram`；所有任务栈与 DMA/FatFs/LwIP/ETH/SPI/UART 缓冲必须位于默认 128 KB 主 RAM。
 3. **单锁短持与 ISR 安全**：全局仅 `sysMutex` 一把锁，持锁时间 `< 20 µs`，严禁持锁做任何阻塞 IO；ISR 中严禁调用 `osMutexAcquire` 或阻塞 API。
 4. **LVGL 单线程**：仅 `HmiTask` 可调用 `lv_*` 函数，其他任务严禁直接操作 UI 控件。
 5. **UART DMA IDLE 防半传输坑**：每次调用 `HAL_UARTEx_ReceiveToIdle_DMA()` 后必须关闭 `DMA_IT_HT`。
