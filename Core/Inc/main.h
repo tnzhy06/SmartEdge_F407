@@ -81,6 +81,8 @@ void Error_Handler(void);
 #define TP_IRQ_GPIO_Port GPIOD
 #define TP_MISO_Pin GPIO_PIN_13
 #define TP_MISO_GPIO_Port GPIOD
+#define RS485_DE_RE_Pin GPIO_PIN_4
+#define RS485_DE_RE_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
 

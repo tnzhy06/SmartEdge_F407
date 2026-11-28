@@ -69,11 +69,18 @@ set(USER_SOURCES
     BSP/Src/bsp_flash.c
     BSP/Src/bsp_st7789.c
     BSP/Src/bsp_xpt2046.c
+    BSP/Src/bsp_rs485.c
+    BSP/Src/bsp_can.c
     App/Src/app_cfg.c
     App/Src/app_data.c
+    App/Src/app_modbus_rtu.c
+    App/Src/app_can_proto.c
     App/Src/app_monitor.c
     App/Src/app_cli.c
     App/Src/app_hmi.c
+    App/Src/app_sensor.c
+    App/Src/app_fansim.c
+    App/Src/app_control.c
     App/Src/ui_main.c
     App/Src/ui_page_overview.c
     App/Src/ui_page_trend.c
