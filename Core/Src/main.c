@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "can.h"
 #include "dma.h"
 #include "rtc.h"
 #include "spi.h"
@@ -101,6 +102,9 @@ int main(void)
   MX_USART1_UART_Init();
   MX_SPI2_Init();
   MX_TIM12_Init();
+  MX_USART2_UART_Init();
+  MX_CAN1_Init();
+  MX_CAN2_Init();
   /* USER CODE BEGIN 2 */
   /* 尝试从 Flash Sector 11 加载掉电配置（失败回退安全默认），再初始化全局状态中心 */
   {

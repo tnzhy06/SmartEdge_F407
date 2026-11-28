@@ -1,26 +1,33 @@
 /**
  * @file    app_cli.c
- * @brief   串口调试命令行任务（CliTask）M2 阶段实现
- * @date    2026-11-27
- * @note    依赖 bsp_uart_cli、bsp_sys、app_data、app_cfg、app_hmi 与 FreeRTOS 任务栈统计接口
+ * @brief   串口调试命令行任务（CliTask）M3 阶段实现
+ * @date    2026-11-28
+ * @note    依赖 bsp_uart_cli、bsp_sys、app_data、app_cfg、app_hmi、app_fansim 与 FreeRTOS 栈统计接口
  */
 
 #include "app_cli.h"
 #include "app_cfg.h"
 #include "app_data.h"
+#include "app_fansim.h"
 #include "app_hmi.h"
+#include "bsp_can.h"
+#include "bsp_rs485.h"
 #include "bsp_sys.h"
 #include "bsp_uart_cli.h"
 #include "cmsis_os.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 /** @brief CubeMX 在 Core/Src/freertos.c 中创建的任务句柄（供栈水位监控） */
 extern osThreadId_t defaultTaskHandle;
 extern osThreadId_t CliTaskHandle;
 extern osThreadId_t HmiTaskHandle;
+extern osThreadId_t ControlTaskHandle;
+extern osThreadId_t FanSimTaskHandle;
+extern osThreadId_t SensorTaskHandle;
 
 /** @brief 单行命令最大缓存长度（字节） */
 #define CLI_LINE_MAX 128U
@@ -55,13 +62,18 @@ static uint8_t ParseDigits(const char *s, uint8_t len, uint16_t *out)
 }
 
 /**
- * @brief  处理 "help" 命令：打印 M2 阶段可用命令清单
+ * @brief  处理 "help" 命令：打印 M3 阶段可用命令清单
  */
 static void CmdHelp(void)
 {
-  Bsp_CliPrintf("Available commands (M2):\r\n");
+  Bsp_CliPrintf("Available commands (M3):\r\n");
   Bsp_CliPrintf("  help                              - Show this help\r\n");
-  Bsp_CliPrintf("  status                            - Show reset/RTC/HMI/CFG/RTOS status\r\n");
+  Bsp_CliPrintf("  status                            - Show sensor/CAN/HMI/CFG/RTOS status\r\n");
+  Bsp_CliPrintf("  bus                               - Show CAN1/CAN2 & RS-485 hardware regs\r\n");
+  Bsp_CliPrintf("  fault stall on|off                - Inject/clear CAN2 fan stall fault\r\n");
+  Bsp_CliPrintf("  fault timeout on|off              - Inject/clear CAN2 cmd ACK timeout\r\n");
+  Bsp_CliPrintf("  fault offline on|off              - Inject/clear CAN2 node offline fault\r\n");
+  Bsp_CliPrintf("  fault clear                       - Clear all injected CAN faults\r\n");
   Bsp_CliPrintf("  rtc set YYYY-MM-DD HH:MM:SS       - Set RTC date & time\r\n");
   Bsp_CliPrintf("  bl <10..100>                      - Set LCD backlight brightness (%%)\r\n");
   Bsp_CliPrintf("  touch cal                         - Launch 4-point touch calibration\r\n");
@@ -71,7 +83,7 @@ static void CmdHelp(void)
 }
 
 /**
- * @brief  处理 "status" 命令：打印复位原因、RTC、控制参数、HMI 内存与 FreeRTOS 堆/栈水位
+ * @brief  处理 "status" 命令：打印复位原因、RTC、温湿度、CAN/控制状态、HMI 内存与 6 任务栈水位
  */
 static void CmdStatus(void)
 {
@@ -82,6 +94,10 @@ static void CmdStatus(void)
   uint32_t mon_wm = 0U;
   uint32_t cli_wm = 0U;
   uint32_t hmi_wm = 0U;
+  uint32_t ctrl_wm = 0U;
+  uint32_t sim_wm = 0U;
+  uint32_t sens_wm = 0U;
+  int16_t abs_t;
 
   AppData_GetSnapshot(&snap);
   AppHmi_GetMemStats(&lv_mem);
@@ -100,8 +116,22 @@ static void CmdStatus(void)
   {
     hmi_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)HmiTaskHandle);
   }
+  if (ControlTaskHandle != NULL)
+  {
+    ctrl_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)ControlTaskHandle);
+  }
+  if (FanSimTaskHandle != NULL)
+  {
+    sim_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)FanSimTaskHandle);
+  }
+  if (SensorTaskHandle != NULL)
+  {
+    sens_wm = (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)SensorTaskHandle);
+  }
 
-  Bsp_CliPrintf("---- SmartEdge_F407 Status (M2) ----\r\n");
+  abs_t = (snap.temp_x10 < 0) ? (int16_t)(-snap.temp_x10) : snap.temp_x10;
+
+  Bsp_CliPrintf("---- SmartEdge_F407 Status (M3) ----\r\n");
   Bsp_CliPrintf(" Reset   : %s (code=%u, hung=0x%02X)\r\n",
                 Bsp_SysResetReasonStr((ResetReason_t)snap.reset_reason),
                 (unsigned int)snap.reset_reason,
@@ -119,12 +149,30 @@ static void CmdStatus(void)
   {
     Bsp_CliPrintf(" RTC     : READ_ERR (%d)\r\n", (int)rtc_err);
   }
-  Bsp_CliPrintf(" Ctrl    : Mode=%s | FanSt=%u | ManRun=%u | ManRPM=%u | ActRPM=%u\r\n",
+  if (snap.sensor_valid != 0U)
+  {
+    Bsp_CliPrintf(" Sensor  : Valid=1 | T=%s%d.%d C | RH=%u.%u %% | RS485Err=%lu\r\n",
+                  (snap.temp_x10 < 0) ? "-" : "",
+                  (int)(abs_t / 10), (int)(abs_t % 10),
+                  (unsigned int)(snap.humi_x10 / 10U), (unsigned int)(snap.humi_x10 % 10U),
+                  (unsigned long)snap.rs485_err_cnt);
+  }
+  else
+  {
+    Bsp_CliPrintf(" Sensor  : Valid=0 | T=--.- C | RH=--.- %% | RS485Err=%lu\r\n",
+                  (unsigned long)snap.rs485_err_cnt);
+  }
+  Bsp_CliPrintf(" Ctrl    : Mode=%s | FanSt=%u | ManRun=%u | Tgt=%u | Act=%u RPM\r\n",
                 (snap.ctrl_mode == CTRL_MODE_MANUAL) ? "MAN" : "AUTO",
                 (unsigned int)snap.fan_state,
                 (unsigned int)snap.manual_run,
-                (unsigned int)snap.manual_target_rpm,
+                (unsigned int)snap.active_target_rpm,
                 (unsigned int)snap.actual_rpm);
+  Bsp_CliPrintf(" CAN     : Online=%u | Fault=0x%04X | CanErr=%lu | Inj=0x%02X\r\n",
+                (unsigned int)snap.can_online,
+                (unsigned int)snap.fault_mask,
+                (unsigned long)snap.can_err_cnt,
+                (unsigned int)AppFanSim_GetInjectMask());
   Bsp_CliPrintf(" Config  : Src=%s | T_ON=%d.%d C | T_OFF=%d.%d C | BL=%u%% | Cal=%u\r\n",
                 (AppCfg_IsLoadedFromFlash() != 0U) ? "Sector11" : "DEFAULT",
                 (int)(snap.temp_start_x10 / 10), (int)(snap.temp_start_x10 % 10),
@@ -143,8 +191,131 @@ static void CmdStatus(void)
   Bsp_CliPrintf(" RTOS    : FreeHeap=%lu B (MinEver=%lu B)\r\n",
                 (unsigned long)xPortGetFreeHeapSize(),
                 (unsigned long)xPortGetMinimumEverFreeHeapSize());
-  Bsp_CliPrintf(" StackWM : Mon=%lu W | Cli=%lu W | Hmi=%lu W\r\n",
-                (unsigned long)mon_wm, (unsigned long)cli_wm, (unsigned long)hmi_wm);
+  Bsp_CliPrintf(" StackWM : Mon=%lu | Cli=%lu | Hmi=%lu | Ctrl=%lu | Sim=%lu | Sens=%lu W\r\n",
+                (unsigned long)mon_wm, (unsigned long)cli_wm, (unsigned long)hmi_wm,
+                (unsigned long)ctrl_wm, (unsigned long)sim_wm, (unsigned long)sens_wm);
+}
+
+/**
+ * @brief  处理 "bus" 命令：打印 CAN1/CAN2 硬件寄存器（TEC/REC/LEC/RX电平）与 RS-485 底层统计
+ */
+static void CmdBusDiag(void)
+{
+  BspCanChDiag_t c1;
+  BspCanChDiag_t c2;
+  BspRs485Diag_t r485;
+
+  Bsp_CanGetDiag(&c1, &c2);
+  Bsp_Rs485GetDiag(&r485);
+
+  Bsp_CliPrintf("---- Hardware Bus Diag (CAN & RS-485) ----\r\n");
+  Bsp_CliPrintf(" CAN1 : ESR=0x%08lX (TEC=%lu REC=%lu LEC=%lu BOFF=%lu) RXPin=%lu MSR=0x%04lX TSR=0x%08lX\r\n",
+                (unsigned long)c1.esr,
+                (unsigned long)((c1.esr >> 16U) & 0xFFUL),
+                (unsigned long)((c1.esr >> 24U) & 0xFFUL),
+                (unsigned long)((c1.esr >> 4U) & 0x07UL),
+                (unsigned long)((c1.esr >> 2U) & 0x01UL),
+                (unsigned long)((c1.msr >> 11U) & 0x01UL),
+                (unsigned long)(c1.msr & 0xFFFFUL),
+                (unsigned long)c1.tsr);
+  Bsp_CliPrintf("        TxOK=%lu TxErr=%lu RxIRQ=%lu Drop=%lu\r\n",
+                (unsigned long)c1.tx_ok_cnt, (unsigned long)c1.tx_err_cnt,
+                (unsigned long)c1.rx_irq_cnt, (unsigned long)Bsp_CanGetRxDropCount());
+  Bsp_CliPrintf(" CAN2 : ESR=0x%08lX (TEC=%lu REC=%lu LEC=%lu BOFF=%lu) RXPin=%lu MSR=0x%04lX TSR=0x%08lX\r\n",
+                (unsigned long)c2.esr,
+                (unsigned long)((c2.esr >> 16U) & 0xFFUL),
+                (unsigned long)((c2.esr >> 24U) & 0xFFUL),
+                (unsigned long)((c2.esr >> 4U) & 0x07UL),
+                (unsigned long)((c2.esr >> 2U) & 0x01UL),
+                (unsigned long)((c2.msr >> 11U) & 0x01UL),
+                (unsigned long)(c2.msr & 0xFFFFUL),
+                (unsigned long)c2.tsr);
+  Bsp_CliPrintf("        TxOK=%lu TxErr=%lu RxIRQ=%lu\r\n",
+                (unsigned long)c2.tx_ok_cnt, (unsigned long)c2.tx_err_cnt,
+                (unsigned long)c2.rx_irq_cnt);
+  Bsp_CliPrintf(" RS485: TxTC=%lu RxEvt=%lu ErrIRQ=%lu UartErr=0x%lX Ret=%ld RXPin(PD6)=%u Len=%u\r\n",
+                (unsigned long)r485.tx_cplt_cnt, (unsigned long)r485.rx_evt_cnt,
+                (unsigned long)r485.err_irq_cnt, (unsigned long)r485.last_uart_er,
+                (long)r485.last_ret, (unsigned int)r485.rx_pin_level,
+                (unsigned int)r485.last_rx_len);
+  if (r485.last_rx_len > 0U)
+  {
+    char hex_buf[64];
+    size_t pos = 0U;
+    uint16_t n = (r485.last_rx_len > 16U) ? 16U : r485.last_rx_len;
+
+    for (uint16_t i = 0U; (i < n) && (pos < (sizeof(hex_buf) - 1U)); i++)
+    {
+      int wrote = snprintf(hex_buf + pos, sizeof(hex_buf) - pos, " %02X",
+                           (unsigned int)r485.last_rx[i]);
+      if (wrote > 0)
+      {
+        pos += (size_t)wrote;
+      }
+    }
+    hex_buf[sizeof(hex_buf) - 1U] = '\0';
+    Bsp_CliPrintf("        LastRX:%s\r\n", hex_buf);
+  }
+}
+
+/**
+ * @brief  处理 "fault ..." 命令：向 CAN2 模拟风扇节点注入或清除三类 CAN 故障
+ * @param[in] arg "fault " 之后的参数子串
+ */
+static void CmdFault(const char *arg)
+{
+  uint8_t mask;
+
+  if (arg == NULL)
+  {
+    Bsp_CliPrintf("Usage: fault <stall|timeout|offline> <on|off> | fault clear\r\n");
+    return;
+  }
+
+  if (strcmp(arg, "clear") == 0)
+  {
+    AppFanSim_SetInjectMask(0U);
+    Bsp_CliPrintf("All CAN fault injections cleared (mask=0x00).\r\n");
+    return;
+  }
+
+  mask = AppFanSim_GetInjectMask();
+  if (strcmp(arg, "stall on") == 0)
+  {
+    mask |= SIM_INJ_STALL;
+  }
+  else if (strcmp(arg, "stall off") == 0)
+  {
+    mask = (uint8_t)(mask & (uint8_t)(~SIM_INJ_STALL));
+  }
+  else if (strcmp(arg, "timeout on") == 0)
+  {
+    mask |= SIM_INJ_TIMEOUT;
+  }
+  else if (strcmp(arg, "timeout off") == 0)
+  {
+    mask = (uint8_t)(mask & (uint8_t)(~SIM_INJ_TIMEOUT));
+  }
+  else if (strcmp(arg, "offline on") == 0)
+  {
+    mask |= SIM_INJ_OFFLINE;
+  }
+  else if (strcmp(arg, "offline off") == 0)
+  {
+    mask = (uint8_t)(mask & (uint8_t)(~SIM_INJ_OFFLINE));
+  }
+  else
+  {
+    Bsp_CliPrintf("Usage: fault <stall|timeout|offline> <on|off> | fault clear\r\n");
+    return;
+  }
+
+  AppFanSim_SetInjectMask(mask);
+  Bsp_CliPrintf("CAN2 fault inject mask updated: 0x%02X (stall=%u timeout=%u offline=%u)\r\n",
+                (unsigned int)mask,
+                ((mask & SIM_INJ_STALL) != 0U) ? 1U : 0U,
+                ((mask & SIM_INJ_TIMEOUT) != 0U) ? 1U : 0U,
+                ((mask & SIM_INJ_OFFLINE) != 0U) ? 1U : 0U);
 }
 
 /**
@@ -272,6 +443,14 @@ static void DispatchLine(char *line)
   else if (strcmp(line, "status") == 0)
   {
     CmdStatus();
+  }
+  else if (strcmp(line, "bus") == 0)
+  {
+    CmdBusDiag();
+  }
+  else if (strncmp(line, "fault ", 6U) == 0)
+  {
+    CmdFault(line + 6U);
   }
   else if (strncmp(line, "rtc set ", 8U) == 0)
   {

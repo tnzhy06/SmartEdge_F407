@@ -28,6 +28,10 @@
 #include "app_monitor.h"
 #include "app_cli.h"
 #include "app_hmi.h"
+#include "app_control.h"
+#include "app_fansim.h"
+#include "app_sensor.h"
+#include "bsp_can.h"
 #include "bsp_uart_cli.h"
 /* USER CODE END Includes */
 
@@ -71,6 +75,37 @@ const osThreadAttr_t HmiTask_attributes = {
   .stack_size = 1536 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for ControlTask */
+osThreadId_t ControlTaskHandle;
+const osThreadAttr_t ControlTask_attributes = {
+  .name = "ControlTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal2,
+};
+/* Definitions for FanSimTask */
+osThreadId_t FanSimTaskHandle;
+const osThreadAttr_t FanSimTask_attributes = {
+  .name = "FanSimTask",
+  .stack_size = 384 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for SensorTask */
+osThreadId_t SensorTaskHandle;
+const osThreadAttr_t SensorTask_attributes = {
+  .name = "SensorTask",
+  .stack_size = 384 * 4,
+  .priority = (osPriority_t) osPriorityNormal2,
+};
+/* Definitions for can1RxQueue */
+osMessageQueueId_t can1RxQueueHandle;
+const osMessageQueueAttr_t can1RxQueue_attributes = {
+  .name = "can1RxQueue"
+};
+/* Definitions for can2RxQueue */
+osMessageQueueId_t can2RxQueueHandle;
+const osMessageQueueAttr_t can2RxQueue_attributes = {
+  .name = "can2RxQueue"
+};
 /* Definitions for sysMutex */
 osMutexId_t sysMutexHandle;
 const osMutexAttr_t sysMutex_attributes = {
@@ -90,6 +125,9 @@ const osSemaphoreAttr_t lcdDmaSem_attributes = {
 void StartDefaultTask(void *argument);
 void StartCliTask(void *argument);
 void StartHmiTask(void *argument);
+void StartControlTask(void *argument);
+void StartFanSimTask(void *argument);
+void StartSensorTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -153,6 +191,13 @@ void MX_FREERTOS_Init(void) {
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* creation of can1RxQueue */
+  can1RxQueueHandle = osMessageQueueNew (16, sizeof(CanFrame_t), &can1RxQueue_attributes);
+
+  /* creation of can2RxQueue */
+  can2RxQueueHandle = osMessageQueueNew (8, sizeof(CanFrame_t), &can2RxQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -166,6 +211,15 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of HmiTask */
   HmiTaskHandle = osThreadNew(StartHmiTask, NULL, &HmiTask_attributes);
+
+  /* creation of ControlTask */
+  ControlTaskHandle = osThreadNew(StartControlTask, NULL, &ControlTask_attributes);
+
+  /* creation of FanSimTask */
+  FanSimTaskHandle = osThreadNew(StartFanSimTask, NULL, &FanSimTask_attributes);
+
+  /* creation of SensorTask */
+  SensorTaskHandle = osThreadNew(StartSensorTask, NULL, &SensorTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -220,6 +274,51 @@ void StartHmiTask(void *argument)
   (void)argument;
   App_HmiTask();
   /* USER CODE END StartHmiTask */
+}
+
+/* USER CODE BEGIN Header_StartControlTask */
+/**
+* @brief Function implementing the ControlTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartControlTask */
+void StartControlTask(void *argument)
+{
+  /* USER CODE BEGIN StartControlTask */
+  (void)argument;
+  App_ControlTask();
+  /* USER CODE END StartControlTask */
+}
+
+/* USER CODE BEGIN Header_StartFanSimTask */
+/**
+* @brief Function implementing the FanSimTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartFanSimTask */
+void StartFanSimTask(void *argument)
+{
+  /* USER CODE BEGIN StartFanSimTask */
+  (void)argument;
+  App_FanSimTask();
+  /* USER CODE END StartFanSimTask */
+}
+
+/* USER CODE BEGIN Header_StartSensorTask */
+/**
+* @brief Function implementing the SensorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSensorTask */
+void StartSensorTask(void *argument)
+{
+  /* USER CODE BEGIN StartSensorTask */
+  (void)argument;
+  App_SensorTask();
+  /* USER CODE END StartSensorTask */
 }
 
 /* Private application code --------------------------------------------------*/

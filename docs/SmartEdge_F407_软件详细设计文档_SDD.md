@@ -5,12 +5,12 @@
 | 项目 | 内容 |
 | --- | --- |
 | **文档编号** | `SE-F407-SDD-001` |
-| **文档版本** | `V1.1` |
-| **文档状态** | 基线更新（M2 实测同步） |
+| **文档版本** | `V1.2` |
+| **文档状态** | 基线更新（M3 实测同步） |
 | **项目名称** | SmartEdge_F407 工业边缘采集网关与本地触控终端 |
 | **工程根目录** | `D:\SmartEdge_F407`（STM32CubeMX 原生 CMake 工程，纯 C11） |
 | **上游基线** | [软件需求规格说明书（SRS）](./SmartEdge_F407_软件需求规格说明书_SRS.md)（`SE-F407-SRS-001`）<br>[硬件资源分配表](./SmartEdge_F407_硬件资源分配表.md)（`SE-F407-HW-001`）<br>[软件架构设计文档（SAD）](./SmartEdge_F407_软件架构设计文档_SAD.md)（`SE-F407-SAD-001` V2.1） |
-| **编制日期** | 2026-11-27 |
+| **编制日期** | 2026-11-28 |
 
 ### 修订记录
 
@@ -18,6 +18,7 @@
 | --- | --- | --- |
 | `V1.0` | 2026-11-25 | 完成全系统 9 个 BSP 驱动模块、5 个核心服务/协议模块、8 个 FreeRTOS 任务及 2 个扩展预留模块的详细设计，并附设计评审风险核查表与分阶段联调路线。 |
 | `V1.1` | 2026-11-27 | 同步 M2 阶段实测落地细节：LVGL v9.6.0 采用原生 `LV_COLOR_FORMAT_RGB565_SWAPPED`（零刷屏字节交换）、`.ccmram` 内存池扩容至 `48 KB`（`LV_MEM_POOL_ALLOC` 绑定）、`ST7789` 实测非反显（`0x20 INVOFF`）与 `flush_wait_cb` 阻塞等 `lcdDmaSem` + 超时自恢复、`bsp_flash`/`app_cfg` 提前至 M2 落地并细化 API 签名。 |
+| `V1.2` | 2026-11-28 | 同步 M3 阶段实测落地细节：细化 `bsp_rs485`/`bsp_can` 硬件诊断快照 API 与 CLI `bus` 命令、补充 `AppState_t.can_online` 与 `AppData_UpdateCanFeedback()` 签名、`AppControl_NotifyUpdate()`/`AppControl_ResetCanTimers()` 联动以及节点失联时收敛从属故障位策略。 |
 
 ---
 
@@ -251,10 +252,11 @@ typedef struct {
 
 - **对外 API**：
   ```c
-  void     Bsp_Rs485Init(void);
+  AppErr_t Bsp_Rs485Init(osThreadId_t owner_task);
   AppErr_t Bsp_Rs485Transceive(const uint8_t *tx, uint16_t tx_len,
                                uint8_t *rx, uint16_t rx_max,
                                uint16_t *rx_len, uint32_t timeout_ms);
+  void     Bsp_Rs485GetDiag(BspRs485Diag_t *out);
   ```
 - **内部时序逻辑**：
   1. 清零 `SensorTaskHandle` 上残留的 `FLAG_RS485_RX | FLAG_RS485_ERR` 标志。
@@ -271,8 +273,11 @@ typedef struct {
 - **对外 API**：
   ```c
   AppErr_t Bsp_CanInit(void);
+  uint8_t  Bsp_CanIsReady(void);
   AppErr_t Bsp_Can1Send(uint32_t std_id, const uint8_t data[8]);
   AppErr_t Bsp_Can2Send(uint32_t std_id, const uint8_t data[8]);
+  uint32_t Bsp_CanGetRxDropCount(void);
+  void     Bsp_CanGetDiag(BspCanChDiag_t *can1_out, BspCanChDiag_t *can2_out);
   ```
 - **内部逻辑**：
   1. `Bsp_CanInit()`：
@@ -346,9 +351,12 @@ typedef struct {
   ```c
   void AppData_Init(const AppConfig_t *cfg, ResetReason_t rst, uint16_t hung_mask);
   void AppData_GetSnapshot(AppState_t *out);
-  void AppData_UpdateSensor(int16_t temp_x10, uint16_t humi_x10, uint8_t valid);
-  void AppData_UpdateCanFeedback(uint16_t actual_rpm, uint8_t fan_state);
-  void AppData_UpdateFaultBit(FaultBit_t bit, uint8_t active); /* 状态变化自动记日志 */
+  void    AppData_UpdateSensor(int16_t temp_x10, uint16_t humi_x10, uint8_t valid);
+  void    AppData_UpdateCanFeedback(uint16_t actual_rpm, uint16_t active_target_rpm,
+                                    uint8_t fan_state, uint8_t can_online);
+  uint8_t AppData_UpdateFaultBit(FaultBit_t bit, uint8_t active); /* 返回 1 表示实际跃迁 */
+  void    AppData_IncRs485Err(void);
+  void    AppData_IncCanErr(void);
   void AppData_UpdateNet(uint8_t link_up, uint32_t ipv4, uint8_t sntp_synced);
   void AppData_UpdateSystemTick(uint32_t uptime_sec, uint32_t rtc_unix, uint8_t tf_ready);
   void AppData_PushTrendPoint(int16_t temp_x10, uint16_t humi_x10, uint16_t rpm);
@@ -532,7 +540,7 @@ stateDiagram-v2
      - **命令超时**：`s_cmd_waiting && (now - s_cmd_tx_tick >= 500)` → 若 `s_cmd_retries == 0` 则重发同 `seq` 一次并重置计时；否则置位 `FAULT_CAN_CMD_TIMEOUT` 并 `s_cmd_waiting = 0`。
      - **节点失联**：`(now - s_last_hb_tick >= 1500)` → 置位 `FAULT_CAN_NODE_OFFLINE`，将 `s_actual_rpm = 0`。
      - **风扇堵转**：若节点在线且 (`s_node_stall_flag == 1` 或 `[want_en == 1 && (now - s_run_start_tick >= 1500) && s_actual_rpm < 200]`) → 置位 `FAULT_CAN_STALL`；否则清除 `FAULT_CAN_STALL`。
-  5. 若任意 CAN 故障位激活，上报展示状态为 `FAN_FAULT`（同时保留实际控制目标）；调用 `AppData_UpdateCanFeedback(s_actual_rpm, show_state)`。
+  5. 若任意 CAN 故障位激活，上报展示状态为 `FAN_FAULT`（同时保留实际控制目标）；调用 `AppData_UpdateCanFeedback(s_actual_rpm, s_sent_rpm, show_state, s_can_online)`。
 
 ### 6.4 `app_fansim`（`FanSimTask`：CAN2 独立模拟风扇节点）
 
@@ -643,6 +651,7 @@ stateDiagram-v2
 | --- | --- |
 | `help` | 打印全部命令与用法说明 |
 | `status` | 调 `AppData_GetSnapshot(&s)` 打印温湿度、模式、阈值、目标/实测转速、故障位、`IP`、`RTC` 及复位原因 |
+| `bus` | 读取并打印 CAN1/CAN2 硬件寄存器（`ESR`/`MSR`/`TSR`/收发中断计数）与 RS-485 底层统计/原始接收字节（M3 诊断辅助） |
 | `fault stall on\|off` | 置位/清除 `SIM_INJ_STALL`（通过 `AppFanSim_SetInjectMask()`） |
 | `fault timeout on\|off` | 置位/清除 `SIM_INJ_TIMEOUT` |
 | `fault offline on\|off` | 置位/清除 `SIM_INJ_OFFLINE` |

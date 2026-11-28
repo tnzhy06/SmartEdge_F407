@@ -7,6 +7,7 @@
  */
 
 #include "app_cfg.h"
+#include "app_control.h"
 #include "bsp_flash.h"
 #include "bsp_uart_cli.h"
 #include "bsp_xpt2046.h"
@@ -147,7 +148,7 @@ static uint8_t ValidateConfig(const AppConfig_t *cfg)
 static AppErr_t SaveInternal(uint8_t force)
 {
   uint8_t need_write = 0U;
-  uint32_t now = HAL_GetTick();
+  uint32_t now;
   AppErr_t err;
 
   /* 防止 defaultTask 与 CliTask 并发进入擦写流程争用静态 s_save_buf */
@@ -173,6 +174,8 @@ static AppErr_t SaveInternal(uint8_t force)
   }
 
   LockCfg();
+  /* 在持锁区内读取当前节拍，确保 now >= s_dirty_tick，杜绝无符号减法回绕导致提前写盘 */
+  now = HAL_GetTick();
   if ((force != 0U) ||
       ((s_dirty != 0U) && ((now - s_dirty_tick) >= APP_CFG_SAVE_DEBOUNCE_MS)))
   {
@@ -192,8 +195,19 @@ static AppErr_t SaveInternal(uint8_t force)
   s_save_buf.version = APP_CFG_VERSION;
   s_save_buf.crc32 = CalcCrc32((const uint8_t *)&s_save_buf, (uint32_t)offsetof(AppConfig_t, crc32));
 
-  /* 绝对不能在持锁期间擦写 Sector 11（耗时 1~2 s） */
-  err = Bsp_FlashEraseWriteSector11(&s_save_buf, (uint32_t)sizeof(s_save_buf));
+  /* 绝对不能在持锁期间擦写 Sector 11（耗时 1~2 s）；
+     单 Bank 擦写期间挂起调度并在解锁前先原子置位 CAN 计时重置标志，防止低优先级 CliTask
+     擦写刚完成即被高优先级 ControlTask 抢占而错过重置窗口 */
+  {
+    int32_t sched_lock = (osKernelGetState() == osKernelRunning) ? osKernelLock() : -1;
+    err = Bsp_FlashEraseWriteSector11(&s_save_buf, (uint32_t)sizeof(s_save_buf));
+    AppControl_MarkCanTimerReset();
+    if (sched_lock >= 0)
+    {
+      (void)osKernelRestoreLock(sched_lock);
+    }
+    AppControl_NotifyUpdate();
+  }
   if (err == APP_OK)
   {
     LockCfg();

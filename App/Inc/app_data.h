@@ -86,6 +86,7 @@ typedef struct
   uint8_t eth_link_up;        /**< 以太网链路连通标志（1=已连通） */
   uint8_t sntp_synced;        /**< SNTP 已校时标志（1=已校时） */
   uint8_t tf_ready;           /**< TF 卡挂载就绪标志（1=就绪） */
+  uint8_t can_online;         /**< CAN2 模拟风扇节点心跳在线标志（1=在线） */
   uint8_t backlight_pct;      /**< 屏幕背光占空比（10..100 %） */
   uint32_t ipv4_addr;         /**< 当前 IPv4 地址（网络字节序） */
   uint32_t uptime_sec;        /**< 系统累计运行时长（单位：s） */
@@ -125,6 +126,42 @@ void AppData_ApplyConfig(const AppConfig_t *cfg);
  * @warning 禁止在中断上下文中调用
  */
 void AppData_GetSnapshot(AppState_t *out);
+
+/**
+ * @brief  更新温湿度传感器最新采样值与数据有效性（由 SensorTask 调用）
+ * @param[in] temp_x10 当前环境温度（单位：0.1 °C，有符号）
+ * @param[in] humi_x10 当前相对湿度（单位：0.1 %RH）
+ * @param[in] valid    数据有效标志（1=有效，0=失效）
+ */
+void AppData_UpdateSensor(int16_t temp_x10, uint16_t humi_x10, uint8_t valid);
+
+/**
+ * @brief  更新 CAN2 反馈转速、当前生效下发转速、展示风扇状态与节点在线标志（由 ControlTask 调用）
+ * @param[in] actual_rpm        CAN2 反馈实测转速（RPM）
+ * @param[in] active_target_rpm 当前生效下发目标转速（RPM）
+ * @param[in] fan_state         当前展示风扇状态（FanState_t）
+ * @param[in] can_online        CAN2 节点心跳在线标志（1=在线，0=离线）
+ */
+void AppData_UpdateCanFeedback(uint16_t actual_rpm, uint16_t active_target_rpm,
+                               uint8_t fan_state, uint8_t can_online);
+
+/**
+ * @brief  更新全局综合故障位掩码中的单个故障位（内置变化检测防重复上报）
+ * @param[in] bit    待更新的故障位（FaultBit_t）
+ * @param[in] active 1=置位故障，0=清除故障
+ * @return uint8_t   1 表示故障状态发生实际跃迁，0 表示与原值相同无变化
+ */
+uint8_t AppData_UpdateFaultBit(FaultBit_t bit, uint8_t active);
+
+/**
+ * @brief  递增 RS-485 累计通信错误计数（线程安全）
+ */
+void AppData_IncRs485Err(void);
+
+/**
+ * @brief  递增 CAN 累计异常计数（线程安全）
+ */
+void AppData_IncCanErr(void);
 
 /**
  * @brief  更新系统运行秒数与当前 RTC 时间戳（由 defaultTask 每秒调用）
