@@ -5,12 +5,12 @@
 | 项目 | 内容 |
 | --- | --- |
 | **文档编号** | `SE-F407-SAD-001` |
-| **文档版本** | `V2.1` |
+| **文档版本** | `V2.2` |
 | **文档状态** | 基线发布（Baseline） |
 | **项目定位** | 大学生嵌入式综合学习与实战开发项目（简洁清晰、零过度设计、直接贴合 STM32CubeMX 工程落地） |
 | **工程根目录** | `D:\SmartEdge_F407`（直接作为 STM32CubeMX 工程根目录，所有文件延续 CubeMX 风格） |
 | **关联文档** | [SmartEdge_F407 软件需求规格说明书（SRS）](./SmartEdge_F407_软件需求规格说明书_SRS.md)（`SE-F407-SRS-001`）<br>[SmartEdge_F407 硬件资源分配表](./SmartEdge_F407_硬件资源分配表.md)（`SE-F407-HW-001`）<br>[SmartEdge_F407 软件详细设计文档（SDD）](./SmartEdge_F407_软件详细设计文档_SDD.md)（`SE-F407-SDD-001`） |
-| **编制日期** | 2026-11-25 |
+| **编制日期** | 2026-11-28 |
 
 ### 修订记录
 
@@ -19,6 +19,7 @@
 | `V1.0` | 2026-11-25 | 初版完整软件架构设计文档。 |
 | `V2.0` | 2026-11-25 | 调整为务实精简的 CubeMX 原生工程架构：根目录直接为 CubeMX CMake 工程，FreeRTOS/LwIP/FatFs 全由 CubeMX 生成，沿用默认 `.ld` 链接脚本与 `Inc/Src` 目录风格，精简任务通信、配置存储（Sector 11 单结构体）、TF 日志与低功耗预留实现复杂度。 |
 | `V2.1` | 2026-11-27 | 根据 M2 实测（LVGL v9.6.0 渲染栈深与内存占用）将 `HmiTask` 栈扩容至 `1536 Words (6144 B)`、`defaultTask` 栈扩容至 `384 Words (1536 B)`（总堆保持 `36864 B`），并将 `.ccmram` 中 LVGL 内部内存池由 `32 KB` 扩容至 `48 KB`。 |
+| `V2.2` | 2026-11-28 | 同步 M3 阶段 `AppState_t` 新增 `can_online` 在线标志字段，准确反映 CAN2 心跳在线状态。 |
 
 ---
 
@@ -244,6 +245,7 @@ typedef struct {
     uint8_t  eth_link_up;        /* 1=网线连通 */
     uint8_t  sntp_synced;        /* 1=SNTP 校时成功 */
     uint8_t  tf_ready;           /* 1=TF 卡就绪 */
+    uint8_t  can_online;         /* 1=CAN2 心跳在线 */
     uint8_t  backlight_pct;      /* 10..100 % */
     uint32_t ipv4_addr;          /* 当前 IPv4 */
     uint32_t uptime_sec;         /* 运行秒数 */
