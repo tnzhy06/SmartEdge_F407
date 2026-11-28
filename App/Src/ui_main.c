@@ -187,7 +187,7 @@ static void UpdateTopBar(const AppState_t *snap)
     }
   }
 
-  uint8_t can_active = (snap->actual_rpm > 0U) ? 1U : 0U;
+  uint8_t can_active = (snap->can_online != 0U) ? 1U : 0U;
 
   if ((s_top_inited == 0U) || (snap->fault_mask != s_prev_fault) ||
       (snap->sensor_valid != s_prev_sens_valid) || (can_active != s_prev_can_active) ||
@@ -216,10 +216,10 @@ static void UpdateTopBar(const AppState_t *snap)
     }
     else
     {
-      c_485 = UI_COLOR_BTN_IDLE; /* M2 未接 RS-485 采集中，显示中性灰 */
+      c_485 = UI_COLOR_BTN_IDLE; /* 冷启动尚未收到首帧有效数据时显示中性灰 */
     }
 
-    /* 仅在无 CAN 故障且收到真实转速反馈时将 CAN 徽章标绿，避免 M2 手动点 RUN 误标在线 */
+    /* 无 CAN 故障且收到 CAN2 心跳在线时标绿（即使风扇停转 0 RPM 亦保持在线绿灯） */
     if ((snap->fault_mask & can_faults) != 0U)
     {
       c_can = UI_COLOR_ERR_RED;

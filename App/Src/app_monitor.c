@@ -1,7 +1,7 @@
 /**
  * @file    app_monitor.c
- * @brief   系统监控任务（defaultTask）M2 阶段实现
- * @date    2026-11-27
+ * @brief   系统监控任务（defaultTask）M3 阶段实现
+ * @date    2026-11-28
  * @note    每 500 ms 翻转 LED2（1 Hz 心跳）；每 1 s 更新运行秒数并轮询 2 s 防抖配置写盘；
  *          每 10 s 采集一条快照写入 CCMRAM 历史趋势数组供 Trend 页面展示
  */
@@ -36,7 +36,7 @@ static void PrintBootBanner(void)
   rtc_err = Bsp_RtcGetDateTime(&dt);
 
   Bsp_CliPrintf("\r\n========================================\r\n");
-  Bsp_CliPrintf(" SmartEdge_F407 [M2: HMI + LVGL + Cfg]\r\n");
+  Bsp_CliPrintf(" SmartEdge_F407 [M3: RS-485 + Dual CAN]\r\n");
   Bsp_CliPrintf(" Reset Reason : %s (code=%u, hung=0x%02X)\r\n",
                 Bsp_SysResetReasonStr((ResetReason_t)s_mon_snap.reset_reason),
                 (unsigned int)s_mon_snap.reset_reason,

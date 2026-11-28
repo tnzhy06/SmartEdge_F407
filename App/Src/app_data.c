@@ -7,6 +7,7 @@
  */
 
 #include "app_data.h"
+#include "app_control.h"
 #include "bsp_st7789.h"
 #include "cmsis_os.h"
 #include <stddef.h>
@@ -108,14 +109,11 @@ void AppData_ApplyConfig(const AppConfig_t *cfg)
   g_sys.manual_target_rpm = cfg->manual_rpm_def;
   g_sys.backlight_pct = cfg->backlight_pct;
   g_sys.ipv4_addr = cfg->static_ip;
-  if ((g_sys.ctrl_mode == CTRL_MODE_MANUAL) && (g_sys.manual_run != 0U))
-  {
-    g_sys.active_target_rpm = g_sys.manual_target_rpm;
-  }
   bl_pct = g_sys.backlight_pct;
   UnlockState();
 
   Bsp_LcdSetBacklight(bl_pct);
+  AppControl_NotifyUpdate();
 }
 
 void AppData_GetSnapshot(AppState_t *out)
@@ -128,6 +126,61 @@ void AppData_GetSnapshot(AppState_t *out)
   /* 持锁仅做极速内存拷贝（< 5 us），严禁在锁内执行任何阻塞外设 IO */
   LockState();
   memcpy(out, &g_sys, sizeof(AppState_t));
+  UnlockState();
+}
+
+void AppData_UpdateSensor(int16_t temp_x10, uint16_t humi_x10, uint8_t valid)
+{
+  LockState();
+  g_sys.temp_x10 = temp_x10;
+  g_sys.humi_x10 = humi_x10;
+  g_sys.sensor_valid = (valid != 0U) ? 1U : 0U;
+  UnlockState();
+}
+
+void AppData_UpdateCanFeedback(uint16_t actual_rpm, uint16_t active_target_rpm,
+                               uint8_t fan_state, uint8_t can_online)
+{
+  LockState();
+  g_sys.actual_rpm = actual_rpm;
+  g_sys.active_target_rpm = active_target_rpm;
+  g_sys.fan_state = fan_state;
+  g_sys.can_online = (can_online != 0U) ? 1U : 0U;
+  UnlockState();
+}
+
+uint8_t AppData_UpdateFaultBit(FaultBit_t bit, uint8_t active)
+{
+  uint16_t old_mask;
+  uint16_t new_mask;
+
+  LockState();
+  old_mask = g_sys.fault_mask;
+  if (active != 0U)
+  {
+    new_mask = (uint16_t)(old_mask | (uint16_t)bit);
+  }
+  else
+  {
+    new_mask = (uint16_t)(old_mask & (uint16_t)(~(uint16_t)bit));
+  }
+  g_sys.fault_mask = new_mask;
+  UnlockState();
+
+  return (new_mask != old_mask) ? 1U : 0U;
+}
+
+void AppData_IncRs485Err(void)
+{
+  LockState();
+  g_sys.rs485_err_cnt++;
+  UnlockState();
+}
+
+void AppData_IncCanErr(void)
+{
+  LockState();
+  g_sys.can_err_cnt++;
   UnlockState();
 }
 
@@ -181,27 +234,10 @@ AppErr_t AppCtrl_SetMode(uint8_t mode)
 
   LockState();
   g_sys.ctrl_mode = mode;
-  /* M2 阶段尚未接入 ControlTask，此处同步目标/状态展示字段便于 HMI 交互验证；M3 改为唤醒 ControlTask */
-  if (mode == CTRL_MODE_MANUAL)
-  {
-    if (g_sys.manual_run != 0U)
-    {
-      g_sys.fan_state = FAN_MAN_RUN;
-      g_sys.active_target_rpm = g_sys.manual_target_rpm;
-    }
-    else
-    {
-      g_sys.fan_state = FAN_STOP;
-      g_sys.active_target_rpm = 0U;
-    }
-  }
-  else
-  {
-    g_sys.fan_state = FAN_STOP;
-    g_sys.active_target_rpm = 0U;
-  }
   UnlockState();
 
+  /* 立即唤醒高优先级 ControlTask 重算状态机并经 CAN1 下发最新指令 */
+  AppControl_NotifyUpdate();
   return APP_OK;
 }
 
@@ -220,13 +256,9 @@ AppErr_t AppCtrl_SetManualRun(uint8_t run, uint8_t from_modbus)
     return APP_ERR_PERM;
   }
   g_sys.manual_run = run;
-  if (g_sys.ctrl_mode == CTRL_MODE_MANUAL)
-  {
-    g_sys.fan_state = (run != 0U) ? FAN_MAN_RUN : FAN_STOP;
-    g_sys.active_target_rpm = (run != 0U) ? g_sys.manual_target_rpm : 0U;
-  }
   UnlockState();
 
+  AppControl_NotifyUpdate();
   return APP_OK;
 }
 
@@ -239,12 +271,9 @@ AppErr_t AppCtrl_SetManualRpm(uint16_t rpm)
 
   LockState();
   g_sys.manual_target_rpm = rpm;
-  if ((g_sys.ctrl_mode == CTRL_MODE_MANUAL) && (g_sys.manual_run != 0U))
-  {
-    g_sys.active_target_rpm = rpm;
-  }
   UnlockState();
 
+  AppControl_NotifyUpdate();
   SyncConfigFromSnapshot();
   return APP_OK;
 }
@@ -263,6 +292,7 @@ AppErr_t AppCtrl_SetThresholds(int16_t start_x10, int16_t stop_x10)
   g_sys.temp_stop_x10 = stop_x10;
   UnlockState();
 
+  AppControl_NotifyUpdate();
   SyncConfigFromSnapshot();
   return APP_OK;
 }
